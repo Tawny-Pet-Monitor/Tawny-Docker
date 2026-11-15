@@ -19,7 +19,7 @@
 //   deno/main.ts     (Deno Deploy alternative)
 //   ../server.js     (self-host reference)
 
-export const PRIVACY_UPDATED = '2026-10-16';
+export const PRIVACY_UPDATED = '2026-11-15';
 
 export const PRIVACY_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
@@ -175,6 +175,26 @@ export const PRIVACY_HTML = `<!doctype html>
           identify you and are not shared with anyone.</li>
       </ul>
     </li>
+    <li><strong>From away, through relays first</strong> (the GitHub APK,
+      F-Droid, Desktop and Docker editions; not the Play release yet): the
+      devices first try to introduce themselves through public
+      <strong>Nostr relays</strong> (<code>relay.primal.net</code>,
+      <code>relay.nostr.net</code>, <code>relay.snort.social</code>, or the ones
+      you set under Servers). Every note they exchange is sealed so that only
+      the other device can open it. A relay:
+      <ul>
+        <li>sees the device's <strong>IP address</strong>, as any internet
+          connection shows;</li>
+        <li>sees a random key for each paired device, which changes only when
+          you pair again, and the timing and size of the sealed notes (about
+          one every 15 seconds while you are watching);</li>
+        <li>never sees video, audio, names, your pairing key or how the devices
+          connect to each other.</li>
+      </ul>
+      These relays are run by third parties, not by the developer. If no relay
+      delivers, the rendezvous service above is used instead. With
+      <strong>Use only my relays</strong> switched on, neither the public
+      relays nor the rendezvous are contacted.</li>
     <li><strong>To find a direct path</strong>, each device may ask a public
       <strong>STUN</strong> server what its public IP address is. The Play
       release uses Cloudflare's (<code>stun.cloudflare.com</code>) and

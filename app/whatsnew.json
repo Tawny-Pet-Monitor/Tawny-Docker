@@ -1,9 +1,10 @@
 {
-  "version": "2.2.12",
+  "version": "2.2.13",
   "notes": [
-    "Security update: the setup page's actions now only work from the setup page itself, on your own network, so another website can no longer change this server's Tailscale or network settings",
-    "A setup page reached through a public reverse proxy no longer treats every visitor as being on your home network",
-    "Built with up-to-date, patched components after a full security review"
+    "New: this server now runs its own meeting point (a small relay at /relay), and devices find each other through relays first",
+    "The setup page is now \"Tawny server\": what the box runs, and a live test of every meeting point",
+    "New setting TAWNY_ONLY_THIS_BOX=on pairs through this server and nowhere else",
+    "Security: an expired pairing code, or an old QR code, can no longer be used to connect"
   ],
   "changelog": "https://github.com/PressF4me/Tawny-APK/blob/master/docs/changelog/docker.md"
 }

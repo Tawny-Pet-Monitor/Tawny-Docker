@@ -6,7 +6,7 @@
 
 import qrcode from './vendor/qrcode.mjs';
 import { setupTip, closeTip, openSupport, setTipMode } from './tip.js';
-import { NostrSocket } from './nostr/transport.js';
+import { isStationPub, NostrSocket, stationPublicKey } from './nostr/transport.js';
 import { readHealth, recordHealth } from './nostr/relay-health.js';
 import { testRelay } from './nostr/relay-test.js';
 
@@ -1272,6 +1272,10 @@ function pairLink() {
   if (S.token) frag.set('t', S.token);
   frag.set('c', code.c);
   frag.set('e', String(Math.floor(code.exp / 1000)));
+  // The Monitor's Nostr public key, so the scanning phone can meet it on the
+  // relays from its first connection. Public: it opens nothing.
+  const np = S.cfg.nostr ? myNostrPub() : null;
+  if (np) frag.set('np', np);
   // Where to meet, but only when it is not already obvious. A link served from
   // the same host as the rendezvous says nothing extra — the scanning phone
   // works that out from the link's own origin — and every character left out
@@ -1606,6 +1610,7 @@ function adopt(raw) {
   // Remember the ticket this scan just handed us — this device's only chance
   // to learn it — so reconnecting later never depends on rescanning.
   if (S.token) saveToken(S.token);
+  if (saveMonitorNostrPub(p.get('np'))) diag('nostr: the pairing link named the Monitor\'s key');
   setRoleFor(ch, 'viewer');
   S.pending = 'viewer';
   el.joinName.textContent = shownName(ch.name);
@@ -1992,6 +1997,34 @@ const NOSTR_GRACE_MS = 8000;
 const NOSTR_DEAD_MS = 3000;
 const nostrAlive = () => S.signals.some((s) => s.tag === 'nostr' && !s.dead);
 
+// The Monitor's Nostr key is random and never leaves the Monitor. A phone is
+// told the public half: by the pairing link (`np`), or by the Monitor itself
+// once it has let the phone in over any path. Until then a phone has no Nostr
+// leg for that Monitor and uses the others.
+const NOSTR_STATION_KEY = () => `tawny.nostrStation.${S.channel?.id}`;
+
+/** Monitor: this device's Nostr public key for the open channel. */
+function myNostrPub() {
+  if (!S.channel?.id) return null;
+  try { return stationPublicKey(S.channel.id); } catch { return null; }
+}
+
+/** Handheld: the paired Monitor's Nostr public key, or null if never told. */
+function monitorNostrPub() {
+  if (!S.channel?.id) return null;
+  let v = null;
+  try { v = localStorage.getItem(NOSTR_STATION_KEY()); } catch {}
+  return isStationPub(v) ? v : null;
+}
+
+/** Handheld: remember the Monitor's key. True when it was new or different. */
+function saveMonitorNostrPub(raw) {
+  const v = String(raw || '').toLowerCase();
+  if (!S.channel?.id || !isStationPub(v) || v === monitorNostrPub()) return false;
+  try { localStorage.setItem(NOSTR_STATION_KEY(), v); } catch { return false; }
+  return true;
+}
+
 /**
  * Handheld: start the Nostr leg of the race, and give it NOSTR_GRACE_MS to
  * produce a Monitor before the rendezvous is dialled as well. Whichever finds
@@ -1999,6 +2032,15 @@ const nostrAlive = () => S.signals.some((s) => s.tag === 'nostr' && !s.dead);
  */
 function viewerStartNostr() {
   if (S.committedTag || nostrAlive()) return;
+  if (!monitorNostrPub()) {
+    // Paired before the Monitor had its own key, or from a link without one.
+    // The Monitor hands its key over on the next session by any other path.
+    diag('nostr: this phone has not been told the Monitor\'s key yet; using the other paths');
+    if (nostrOnly()) { onlyNeedsPairing(); return; }
+    const rv0 = rendezvousBase();
+    if (rv0 && !S.signals.some((s) => s.tag === 'cloud' && !s.dead)) openSignal(rv0, 'cloud');
+    return;
+  }
   const nostr = openSignal(null, 'nostr');
   // Only my relays: there is no rendezvous behind Nostr, by the user's choice.
   if (nostrOnly()) { watchOnlyMode(nostr); return; }
@@ -2024,6 +2066,14 @@ function viewerStartNostr() {
  * not answer, or the other device is not on them, the one honest thing left is
  * to say so (once per socket) instead of waiting in silence.
  */
+/** Only my relays, and this phone was never told the Monitor's key: say what to do. */
+function onlyNeedsPairing() {
+  if (S.onlyPairNoted) return;
+  S.onlyPairNoted = true;
+  diag('only-my-relays: no Monitor key on this phone; it has to pair again');
+  toast(TawnyT.t('w_toast_only_repair'), 12000);
+}
+
 const ONLY_DEAD_MS = 9000;          // the relay tests take up to ~6 s
 const ONLY_NO_MONITOR_MS = 16000;   // after that: relays fine, nobody there
 function watchOnlyMode(entry) {
@@ -2058,6 +2108,8 @@ function newNostrSocket() {
     channelKey: S.channel.key,
     role: S.role,
     roomId: S.roomId,
+    stationKeyName: S.channel.id,
+    stationPub: S.role === 'station' ? '' : (monitorNostrPub() || ''),
     relays: S.cfg.nostr.relays,
     mirror: S.cfg.nostr.mirror,
     label: `${S.role === 'station' ? 'monitor' : 'handheld'}-${S.nativeShell ? 'phone' : 'desktop'}`,
@@ -2680,9 +2732,11 @@ function connectAll() {
     if (S.signalUrl) {
       openSignal(S.signalUrl, 'lan');
       S.raceTimer = setTimeout(viewerStartNostr, 2500);
-    } else {
+    } else if (monitorNostrPub()) {
       S.committedTag = 'nostr';
       watchOnlyMode(openSignal(null, 'nostr'));
+    } else {
+      onlyNeedsPairing();
     }
     return;
   }
@@ -3482,6 +3536,10 @@ async function handle(m, entry) {
         break;
       }
       if (S.role !== 'viewer') break;
+      // The Monitor's Nostr public key, from the Monitor and only the Monitor.
+      if (m.np !== undefined && S.peers.get(m.from)?.role === 'station' && saveMonitorNostrPub(m.np)) {
+        diag('nostr: the Monitor handed over its key; the relays are used from the next session');
+      }
       // Who else is on this camera, from the Monitor and only the Monitor.
       if (m.roster !== undefined) {
         if (S.peers.get(m.from)?.role === 'station') {
@@ -3841,6 +3899,11 @@ async function answerPeer(peer, sdp) {
   if (S.role === 'station') {
     const meta = { type: 'meta', rot: S.rot, to: peer.id };
     if (S.channel?.name) meta.petName = S.channel.name;
+    // This phone has just been let in: tell it where to find this Monitor on
+    // the relays next time. (A phone that paired before Monitors had their own
+    // key learns it here.)
+    const np = S.cfg.nostr ? myNostrPub() : null;
+    if (np) meta.np = np;
     sig(meta, peer);
   }
   // And the light: a Viewer joining a session where the room is already lit
@@ -5668,6 +5731,10 @@ window.tawnyStart = function (role, key, name, signalUrl, rendezvousUrl, token, 
   }
   try { localStorage.setItem(ONBOARDED, '1'); } catch {}
   S.channel = ch;
+  // The Monitor's Nostr public key: a Monitor tells the shell, which puts it in
+  // the QR it draws; a Handheld is handed the one the shell scanned.
+  if (role === 'station') tellNative('nostrKey', { pub: myNostrPub() || '' });
+  else if (opts && saveMonitorNostrPub(opts.nostrStation)) diag('nostr: the scanned code named the Monitor\'s key');
   start(role === 'station' ? 'station' : 'viewer');
   return true;
 };

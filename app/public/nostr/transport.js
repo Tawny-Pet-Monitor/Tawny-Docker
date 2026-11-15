@@ -8,9 +8,12 @@
 // ordinary Nostr relays, which never see anything but sealed envelopes.
 //
 // Keys
-//   Monitor   derived from the channel key, so every phone already paired to
-//             this channel knows where to find it, with no change to the QR.
-//   Handheld  random, made once per channel and kept in localStorage.
+//   Monitor   random, made once per channel and kept on the Monitor. Only its
+//             public half ever leaves: in the pairing link (`np`), and from the
+//             Monitor itself to a phone it has let in. Nothing in a QR can open
+//             what phones send the Monitor, or speak as the Monitor.
+//   Handheld  random, made once per channel and kept in localStorage. It
+//             must be told the Monitor's public key (o.stationPub).
 //
 // Membership (what the room relay's ticket check used to do)
 //   A Handheld sends `join` with HMAC(channel key, its key | Monitor key | time).
@@ -43,7 +46,6 @@ import { generateSecretKey, getPublicKey, tagValue, tagValues } from './nostr.js
 import { giftWrap, KIND_EPHEMERAL_GIFT_WRAP, unwrap, UnwrapError } from './nip59.js';
 import { Relay } from './relay-client.js';
 import { pickRelays, recordHealth } from './relay-health.js';
-import { etc } from '../vendor/secp256k1.mjs';
 
 export const KIND_SIGNAL = 25050;
 // The frames a room relay forwards; same list as rendezvous/protocol.js RELAY.
@@ -71,23 +73,11 @@ const PROBE_PAD = 6000;            // makes the test envelope ~11 KB, the size o
 // relay, a duplicate. Not held against it.
 const TRANSIENT = /^(timeout$|not connected$|rate-limited:|duplicate:|error:)/;
 
-const N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
-
-/** The Monitor's Nostr key for a channel: HMAC-derived, re-hashed in the ~2^-128 case it is out of range. */
-export function stationSecret(channelKey) {
-  let k = hmacSha256(utf8('tawny-nostr-station-v1'), utf8(channelKey));
-  for (let i = 1; ; i++) {
-    const n = etc.bytesToNumberBE(k);
-    if (n > 0n && n < N) return k;
-    k = hmacSha256(utf8('tawny-nostr-station-v1'), utf8(channelKey), Uint8Array.of(i));
-  }
-}
-
 const joinProof = (channelKey, handheld, station, at) =>
   hex(hmacSha256(utf8(channelKey), utf8(`tawny-nostr-join-v1|${handheld}|${station}|${at}`)));
 
-function handheldSecret(roomId) {
-  const slot = `tawny.nostrKey.${roomId}`;
+/** A secret key kept in localStorage under `slot`, made on first use. */
+function storedSecret(slot) {
   let v = null;
   try { v = localStorage.getItem(slot); } catch {}
   if (isHex(v || '', 32)) return unhex(v);
@@ -96,26 +86,46 @@ function handheldSecret(roomId) {
   return sk;
 }
 
+const handheldSecret = (roomId) => storedSecret(`tawny.nostrKey.${roomId}`);
+// Its own slot, so a device that has been both ends of a channel never uses
+// one key for both.
+const stationSecret = (name) => storedSecret(`tawny.nostrStationKey.${name}`);
+
+/**
+ * The public half of this device's Monitor key for a channel, for the pairing
+ * link. `name` is whatever the caller names the channel by on this device; the
+ * same name must be given to NostrSocket as `stationKeyName`.
+ */
+export function stationPublicKey(name) {
+  return getPublicKey(stationSecret(name));
+}
+
+/** A Monitor public key as it travels in a link or a frame: 64 hex characters. */
+export const isStationPub = (v) => typeof v === 'string' && isHex(v, 32);
+
 export class NostrSocket {
   /**
    * @param {object} o
    * @param {string} o.channelKey   the pairing's channel key (never leaves the device)
    * @param {'station'|'viewer'} o.role
    * @param {string} o.roomId       only names this device's stored key
+   * @param {string} [o.stationKeyName]  Monitor: names its stored key (default: roomId)
+   * @param {string} [o.stationPub]  Handheld: the Monitor's public key, from the pairing
+   *                                 link or from the Monitor itself. Required.
    * @param {string[]} o.relays     ws:// or wss:// Nostr relay URLs
    * @param {string} [o.mirror]     DevOps only: URL that receives a copy of every opened layer
    * @param {string} [o.label]      DevOps only: names this connection to the inspector
    * @param {(line: string) => void} [o.log]
    */
-  constructor({ channelKey, role, roomId, relays, mirror = '', label = '', log = () => {} }) {
+  constructor({ channelKey, role, roomId, relays, stationKeyName = '', stationPub = '', mirror = '', label = '', log = () => {} }) {
+    if (role !== 'station' && !isStationPub(stationPub)) throw new Error('a Handheld needs the Monitor\'s public key');
     this.readyState = 0;
     this.onopen = null; this.onmessage = null; this.onclose = null; this.onerror = null;
     this.onrelays = null;            // (report) => void: a relay's verdict changed
     this.channelKey = channelKey;
     this.role = role;
-    this.stationSk = stationSecret(channelKey);
-    this.stationPub = getPublicKey(this.stationSk);
-    this.sk = role === 'station' ? this.stationSk : handheldSecret(roomId);
+    this.sk = role === 'station' ? stationSecret(stationKeyName || roomId) : handheldSecret(roomId);
+    this.stationPub = role === 'station' ? getPublicKey(this.sk) : stationPub.toLowerCase();
     this.peersSlot = `tawny.nostrPeers.${roomId}`;
     this.me = getPublicKey(this.sk);
     // Changes every time this socket is made. The keys are stable, so without
