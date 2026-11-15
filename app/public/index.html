@@ -263,6 +263,9 @@
       </span>
       <span class="support-card-go" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4.5 16.2 12 9 19.5"/></svg></span>
     </button>
+    <!-- Only where the host can keep settings (Tawny Desktop); Android has its
+         own Servers screen behind the diagnostics hatch. -->
+    <button id="ch-servers" class="servers-link" type="button" hidden data-i18n="w_srv_open">Servers (advanced)</button>
     </footer>
    </div>
   </div>
@@ -715,6 +718,58 @@
     <div class="sheet-actions">
       <button id="myname-skip" class="wide ghost" type="button" data-i18n="w_myname_skip">Not now</button>
       <button id="myname-save" class="wide primary" type="button" data-i18n="w_myname_save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- =========================== SERVERS ========================== -->
+<div id="servers" class="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="servers-title">
+    <span class="sheet-grip" aria-hidden="true"></span>
+    <h2 id="servers-title" data-i18n="w_srv_title">Servers</h2>
+    <label class="field">
+      <span data-i18n="w_srv_nostr">Nostr relays</span>
+      <textarea id="servers-nostr" rows="3" spellcheck="false" autocomplete="off" autocapitalize="off" inputmode="url"></textarea>
+    </label>
+    <p class="hint" id="servers-hint" data-i18n="w_srv_hint">How your devices find each other. List your own relays (up to 5, one per line) to use only those. A relay only ever sees sealed envelopes: never your video, never your pairing key.</p>
+    <div id="servers-health-wrap" class="relay-health" hidden>
+      <h3 data-i18n="w_srv_h_title">Last check on this computer</h3>
+      <ul id="servers-health"></ul>
+    </div>
+    <label class="only-row" for="servers-only">
+      <input id="servers-only" type="checkbox">
+      <span class="only-text">
+        <span class="only-title" data-i18n="w_only_title">Use only my relays</span>
+        <span class="only-sub" data-i18n="w_only_sub">Turns off Tawny’s backup server too. Your relays are tested before this is switched on.</span>
+      </span>
+    </label>
+    <p class="note" id="servers-note" role="alert" hidden></p>
+    <div class="sheet-actions">
+      <button id="servers-cancel" class="wide ghost" type="button" data-i18n="w_srv_cancel">Cancel</button>
+      <button id="servers-save" class="wide primary" type="button" data-i18n="w_srv_save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ====================== ONLY MY RELAYS ======================= -->
+<div id="only" class="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="only-title">
+    <span class="sheet-grip" aria-hidden="true"></span>
+    <h2 id="only-title" data-i18n="w_only_title">Use only my relays</h2>
+    <div class="relay-health only-results">
+      <h3 data-i18n="w_only_results">Test from this computer, just now</h3>
+      <ul id="only-list"></ul>
+    </div>
+    <p class="hint" id="only-verdict" role="status"></p>
+    <ul class="only-terms" id="only-terms" hidden>
+      <li data-i18n="w_only_term_backup">No backup. If your relays are down or out of reach, your devices do not connect until they are back.</li>
+      <li data-i18n="w_only_term_both">Every device needs the same relays. Set them on the phone too (Diagnostics, then Servers), or the two will never meet.</li>
+      <li data-i18n="w_only_term_video">Tawny’s video relay is switched off with it. Away from home, video then needs a direct connection or a video relay of your own.</li>
+      <li data-i18n="w_only_term_undo">To undo it, clear the tick in Servers and save.</li>
+    </ul>
+    <div class="sheet-actions">
+      <button id="only-cancel" class="wide ghost" type="button" data-i18n="w_only_cancel">Keep the backup</button>
+      <button id="only-go" class="wide primary" type="button" data-i18n="w_only_go" hidden disabled>Use only my relays</button>
     </div>
   </div>
 </div>

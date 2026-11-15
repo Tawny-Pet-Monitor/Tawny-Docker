@@ -8,11 +8,12 @@
 # app over `tailscale serve` with a real Let's Encrypt certificate — so nobody
 # imports anything and the phone is never touched. One topology, in DESIGN.md.
 #
-# Step 3 is not filler. Two things cannot be done from a compose file, and
-# /setup is where both happen: turning on the subnet route that lets you watch
-# from outside the house (off by default — see TS_ROUTES below), and approving
-# that route once in the Tailscale admin console. The page checks each step and
-# says which one is waiting on you.
+# Your devices find each other through a meeting point (a small relay; this
+# box runs its own, see "Meeting points" below) and the video then goes
+# straight between them. Tailscale is only what gives a browser the secure
+# address it needs for a camera and microphone. /setup shows what the box is
+# running, tests each meeting point, and says which step is waiting on you.
+# The subnet route (TS_ROUTES) is an optional extra path now, off by default.
 #
 # Get an auth key at https://login.tailscale.com/admin/settings/keys — Reusable,
 # and leave "Ephemeral" OFF so the node keeps its identity across restarts. Then:
@@ -118,6 +119,29 @@ services:
       # or home-network name, or on a name listed here. If you reach /setup
       # through your own domain, list that domain here.
       ALLOWED_HOSTS: "${TAWNY_ALLOWED_HOSTS:-}"
+      # ---- Meeting points: how two devices find each other ------------------
+      # Before any video flows, each device leaves the other sealed notes on a
+      # Nostr relay. A relay sees that two random-looking keys are talking and
+      # when; never the pairing key, an address, or a frame of video.
+      #
+      # TAWNY_RELAY         on (default) — this box runs its own relay at
+      #                     /relay. It carries only Tawny's notes and stores
+      #                     nothing. off — don't run it.
+      # TAWNY_NOSTR_RELAYS  the other relays the page may use, comma-separated
+      #                     wss:// addresses. Empty (default) — three public
+      #                     relays known to carry Tawny's notes. off — none:
+      #                     devices meet on this box only, and the Monitor
+      #                     phone then needs this box's relay address in the
+      #                     app's Servers screen (/setup shows it).
+      # TAWNY_NOSTR_MODE    prefer (default) | only | off. off pairs the old
+      #                     way, with no relays at all.
+      TAWNY_RELAY: "${TAWNY_RELAY:-on}"
+      TAWNY_NOSTR_RELAYS: "${TAWNY_NOSTR_RELAYS:-}"
+      TAWNY_NOSTR_MODE: "${TAWNY_NOSTR_MODE:-prefer}"
+      # on: pairing goes through this box and nowhere else (no public relay,
+      # whatever TAWNY_NOSTR_RELAYS says). /setup lists what to check first.
+      TAWNY_ONLY_THIS_BOX: "${TAWNY_ONLY_THIS_BOX:-off}"
+
       # STUN lets a peer learn its public address when the ends are not on one
       # subnet. STUN_URLS=off for an air-gapped LAN.
       STUN_URLS: "${TAWNY_STUN_URLS:-stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478}"

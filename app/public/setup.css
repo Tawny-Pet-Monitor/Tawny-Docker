@@ -32,6 +32,108 @@
    column turns a two-line remedy into six lines. */
 .setup-wrap { max-width: 640px; gap: 20px; }
 
+/* ------------------------------------------------------------- the layout
+   Two things live on this page: what to do (the steps) and what is there (the
+   box and its meeting points). On a phone they stack, steps first, because a
+   new install is read top to bottom. On a laptop they sit side by side, so
+   the state of the box is in view while you work through the steps. */
+.setup-grid { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
+.setup-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.setup-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+@media (min-width: 1000px) {
+  .setup-wrap { max-width: 1080px; }
+  .setup-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 400px);
+    gap: 36px;
+    align-items: start;
+  }
+  /* The bar lines up with the column instead of hugging the window edge. */
+  .setup-page .appbar { padding-inline: max(8px, calc((100% - 1080px) / 2 + var(--pad) - 4px)); }
+}
+
+.sect-title {
+  margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; color: var(--fg);
+}
+.sect-sub { margin: -6px 0 2px; font-size: 13.5px; line-height: 1.55; color: var(--dim); max-width: 62ch; }
+
+.panel-card {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 18px;
+  border-radius: var(--r-card);
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.panel-card .sect-sub { margin: -8px 0 0; font-size: 13px; }
+
+/* ------------------------------------------------------------ on this box */
+.svc-list { display: flex; flex-direction: column; }
+.svc-wait { margin: 0; font-size: 13px; color: var(--dim); }
+.svc {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.svc:first-child { border-top: 0; padding-top: 2px; }
+.svc:last-child { padding-bottom: 0; }
+.svc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.svc-head h3 { margin: 0; font-size: 14.5px; font-weight: 700; color: var(--fg); }
+.svc-say, .svc-note { margin: 0; font-size: 13px; line-height: 1.55; color: var(--dim); }
+.svc-addr { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.svc-addr-label { font-size: 12px; font-weight: 600; color: var(--dim); }
+.svc-addr .copy-row code.pair-url { font-size: 12.5px; overflow-wrap: anywhere; }
+
+/* What state a service is in. The words say it; the colour repeats it. */
+.chip {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px; font-weight: 600; line-height: 1.4;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  background: var(--raise);
+}
+.chip.is-ok  { color: var(--sky-d); border-color: color-mix(in srgb, var(--sky) 45%, var(--line));
+               background: color-mix(in srgb, var(--sky) 12%, var(--panel)); }
+.chip.is-bad { color: var(--live-ink); border-color: color-mix(in srgb, var(--live) 45%, var(--line));
+               background: color-mix(in srgb, var(--live) 10%, var(--panel)); }
+.chip.is-wait { color: var(--fg); border-color: color-mix(in srgb, var(--alert) 55%, var(--line));
+                background: color-mix(in srgb, var(--alert) 22%, var(--panel)); }
+
+/* ---------------------------------------------------------- meeting points */
+.meet-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.meet {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.meet:first-child { border-top: 0; padding-top: 0; }
+.meet-mark {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--raise); color: var(--dim);
+  font-size: 12px; font-weight: 700; line-height: 1;
+}
+.meet.is-testing .meet-mark::before { content: '…'; }
+.meet.is-ok .meet-mark { background: var(--sky); color: var(--on-accent); }
+.meet.is-ok .meet-mark::before { content: '✓'; }
+.meet.is-bad .meet-mark { background: var(--live); color: var(--on-accent); }
+.meet.is-bad .meet-mark::before { content: '✕'; }
+.meet-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.meet-name {
+  font-size: 14px; font-weight: 600; color: var(--fg);
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+.meet-name small { font-size: 12px; font-weight: 500; color: var(--dim); }
+.meet-state { font-size: 13px; line-height: 1.5; color: var(--dim); }
+.meet.is-ok .meet-state { color: var(--sky-d); }
+.meet.is-bad .meet-state { color: var(--fg); }
+#meet-more { display: flex; flex-direction: column; gap: 6px; }
+#meet-test { align-self: flex-start; width: auto; padding-inline: 18px; }
+#meet-test:disabled { opacity: .6; cursor: default; }
+
 /* ---------------------------------------------------------------- verdict */
 .verdict {
   display: flex; align-items: flex-start; gap: 14px;
@@ -229,6 +331,12 @@
 .why[open] summary { margin-bottom: 8px; }
 .why p { margin: 0 0 8px; font-size: 13px; line-height: 1.6; color: var(--dim); }
 .why p:last-child { margin-bottom: 0; }
+/* "Use only this box": what to check first, each with its state. */
+.pre-list { margin: 0 0 10px; padding: 0; list-style: none; display: grid; gap: 10px; }
+.pre { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; }
+.pre .chip { margin-top: 1px; white-space: nowrap; }
+.pre-text { font-size: 13px; line-height: 1.6; color: var(--fg); }
+@media (max-width: 420px) { .pre { grid-template-columns: 1fr; gap: 4px; } .pre .chip { justify-self: start; } }
 
 /* Paste-the-key form. Only shown when there is no other way in — see
    stepConnect() in setup.js. */

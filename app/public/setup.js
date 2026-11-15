@@ -76,7 +76,7 @@ function why(question, ...paragraphs) {
   const key = question.slice(0, 60);
   const d = el('details', whyOpen.has(key) ? { class: 'why', open: 'open' } : { class: 'why' },
     el('summary', {}, question),
-    ...paragraphs.map((p) => el('p', {}, p)));
+    ...paragraphs.filter((p) => p != null).map((p) => el('p', {}, p)));
   d.addEventListener('toggle', () => {
     if (d.open) whyOpen.add(key); else whyOpen.delete(key);
   });
@@ -382,9 +382,31 @@ function maybeCelebrate() {
 
 /* ------------------------------------------------------------------ steps */
 
+/**
+ * Do the devices meet on a relay (Nostr)? Then a Viewer needs no network path
+ * to the Monitor phone, and everything about the home network and the subnet
+ * route below turns from a requirement into an optional extra. Must agree with
+ * `viaRelay` in server.js setupReady().
+ */
+const viaRelay = (data) => !!(data.nostr && data.nostr.on);
+const ROUTE_TITLE = 'Let your devices reach the camera';
+const routeTitle = (data) => (viaRelay(data) ? 'A direct path into your home network' : ROUTE_TITLE);
+
 function stepMachine(data) {
   const { lan } = data;
   const step = findStep(data.startup, 'lan_detect');
+
+  if (viaRelay(data) && (!lan.cidr || lan.looksLikeDockerBridge || (step && step.ok === false))) {
+    return {
+      state: 'done',
+      title: 'This machine',
+      tag: 'running',
+      body: [
+        el('p', { class: 'step-say' }, 'Tawny is running. It could not work out this machine’s home-network address, and that is fine: your devices find each other through a meeting point, so nothing here depends on it.'),
+        el('p', { class: 'step-say' }, 'It only matters if you later switch on the optional direct path in step 3. For that, set TS_ROUTES in your .env to your home network (it usually looks like 192.168.1.0/24) and restart the container.')
+      ]
+    };
+  }
 
   if (!lan.cidr || (step && step.ok === false)) {
     return {
@@ -780,7 +802,7 @@ function routeActionButton(label, cls, path, body) {
 function stepRoute(data) {
   const { tailscale } = data;
   if (!tailscale.loggedIn) {
-    return { state: 'todo', title: 'Let your devices reach the camera', tag: 'after the step above' };
+    return { state: 'todo', title: routeTitle(data), tag: viaRelay(data) ? 'optional' : 'after the step above' };
   }
 
   const pending = tailscale.pendingRoutes || [];
@@ -817,7 +839,7 @@ function stepRoute(data) {
     if (advertising.length) {
       return {
         state: 'bad',
-        title: 'Let your devices reach the camera',
+        title: routeTitle(data),
         tag: 'conflicts with another device',
         body: [
           el('p', { class: 'step-say' }, `Tawny is advertising ${advertising.join(', ')}, but ${who} already advertises an overlapping range. If your Wi-Fi has been dropping or looping since you set this up, this is almost certainly why.`),
@@ -837,7 +859,7 @@ function stepRoute(data) {
       const by = covered.map((c) => c.peer).join(', ');
       return {
         state: 'done',
-        title: 'Let your devices reach the camera',
+        title: routeTitle(data),
         tag: `carried by ${covered[0].peer}`,
         body: [
           el('p', { class: 'step-say' }, `${by} already routes ${covered[0].peerRoute} into your Tailscale network, and that covers ${cidr} — so your devices can already reach the camera from outside the house. Nothing to do here.`),
@@ -857,7 +879,7 @@ function stepRoute(data) {
     if (!tailscale.routesEnabled && tailscale.routeChoice === 'lan-only') {
       return {
         state: 'done',
-        title: 'Let your devices reach the camera',
+        title: routeTitle(data),
         tag: 'this Wi-Fi only',
         body: [
           el('p', { class: 'step-say' }, `Remote access is off, so Tawny works from devices on this Wi-Fi. Nothing is advertised to the rest of your Tailscale network — so the overlap with ${who} is not something Tawny is taking part in.`),
@@ -870,7 +892,7 @@ function stepRoute(data) {
 
     return {
       state: 'now',
-      title: 'Let your devices reach the camera',
+      title: routeTitle(data),
       tag: 'needs your decision',
       body: [
         el('p', { class: 'step-say' }, `Tawny did not advertise ${cidr} because ${who} already advertises part of that range — but not all of it, so some of your home network would still be unreachable. Advertising the same range twice is what makes a tailnet's routing flip back and forth, which looks like your whole internet connection going in a loop, so Tawny will not do it on its own.`),
@@ -886,7 +908,7 @@ function stepRoute(data) {
   if (!pending.length && approved.length) {
     return {
       state: 'done',
-      title: 'Let your devices reach the camera',
+      title: routeTitle(data),
       tag: 'approved',
       body: [el('p', { class: 'step-say' }, `${approved.join(', ')} is approved.`)]
     };
@@ -898,10 +920,26 @@ function stepRoute(data) {
   // which is what most people are here for. So this is asked out loud, once,
   // and the answer is remembered on the container. Not a setting to discover
   // in a .env file, and not a silent default either way.
+  // With a meeting point this is no longer the question that gates watching
+  // from outside: the devices find each other on a relay and connect straight
+  // to each other. The route stays available for anyone who wants it, off.
+  if (viaRelay(data) && !tailscale.routesEnabled && tailscale.routeChoice === 'unset') {
+    return {
+      state: 'done',
+      title: routeTitle(data),
+      tag: 'optional, off',
+      body: [
+        el('p', { class: 'step-say' }, el('b', {}, 'You can skip this.'), ' Your devices find each other through a meeting point and then connect directly, so watching from outside the house works without it.'),
+        el('p', { class: 'step-say' }, `What it adds: Tailscale can carry traffic from your other devices into ${cidr || 'your home network'}, which gives the video one more route when a network blocks direct connections. It is off by default because two devices routing the same network makes a tailnet flip between them.`),
+        routeActionButton('Turn on the direct path', 'wide', '/setup/route/advertise'),
+        explain
+      ]
+    };
+  }
   if (!tailscale.routesEnabled && tailscale.routeChoice === 'unset') {
     return {
       state: 'now',
-      title: 'Let your devices reach the camera',
+      title: routeTitle(data),
       tag: 'your choice',
       body: [
         el('p', { class: 'step-say' }, 'Do you want to watch from ', el('b', {}, 'outside the house'), ' — from work, or on mobile data? Tawny needs your permission to pass traffic through to your home network first. It is off until you say so.'),
@@ -918,7 +956,7 @@ function stepRoute(data) {
     // Answered "this Wi-Fi only". Settled, and reversible from right here.
     return {
       state: 'done',
-      title: 'Let your devices reach the camera',
+      title: routeTitle(data),
       tag: 'this Wi-Fi only',
       body: [
         el('p', { class: 'step-say' }, 'Remote access is off, so Tawny works from devices on this Wi-Fi. Nothing is advertised to the rest of your Tailscale network.'),
@@ -931,7 +969,7 @@ function stepRoute(data) {
   if (!pending.length && !approved.length) {
     return {
       state: 'bad',
-      title: 'Let your devices reach the camera',
+      title: routeTitle(data),
       tag: 'could not offer the route',
       body: [
         el('p', { class: 'step-say' }, 'Remote access is switched on, but Tawny is not offering a route to your home network — so you will only be able to watch from a device on this same Wi-Fi.'),
@@ -944,7 +982,7 @@ function stepRoute(data) {
 
   return {
     state: 'now',
-    title: 'Let your devices reach the camera',
+    title: routeTitle(data),
     tag: 'needs you — one click',
     body: [
       el('p', { class: 'step-say' }, 'Everything is running. Tailscale just needs your permission to carry traffic to your home network — this is the one step nothing can do for you.'),
@@ -975,15 +1013,16 @@ function stepDevices(data) {
   // deployment (a NAS already routing the LAN, Tawny correctly declining to be
   // a second router) sat here reading "after the steps above" for ever, with
   // the banner above it saying everything was ready.
+  const relay = viaRelay(data);
   const ready = tailscale.loggedIn && !(tailscale.pendingRoutes || []).length
-    && ((tailscale.approvedRoutes || []).length || (tailscale.routeCoveredBy || []).length);
+    && (relay || (tailscale.approvedRoutes || []).length || (tailscale.routeCoveredBy || []).length);
 
   // "This Wi-Fi only" advertises no route by design, so the test above can
   // never pass there — and nothing on this step applies: subnet routes are
   // exactly what that answer turned down. Settled the same way step 3 settles
   // it, so this cannot sit on "after the steps above" under a "ready" banner.
   const carried = (tailscale.approvedRoutes || []).length || (tailscale.routeCoveredBy || []).length;
-  if (tailscale.loggedIn && !carried && !tailscale.routesEnabled
+  if (!relay && tailscale.loggedIn && !carried && !tailscale.routesEnabled
       && tailscale.routeChoice && tailscale.routeChoice !== 'unset') {
     return { state: 'done', title: 'Put your devices on the network', tag: 'this Wi-Fi only' };
   }
@@ -999,15 +1038,35 @@ function stepDevices(data) {
   // step cannot verify itself. Left as an open action it would sit here for
   // ever, telling people to do something they have already done — so it is
   // theirs to close.
+  const devTitle = relay && !carried ? 'Put the device you watch from on Tailscale' : 'Put your devices on the network';
   if (devicesAcked()) {
-    return { state: 'done', title: 'Put your devices on the network', tag: 'you confirmed this' };
+    return { state: 'done', title: devTitle, tag: 'you confirmed this' };
   }
   if (!ready) {
-    return { state: 'todo', title: 'Put your devices on the network', tag: 'after the steps above' };
+    return { state: 'todo', title: devTitle, tag: 'after the steps above' };
   }
 
   const ack = el('button', { class: 'wide', type: 'button', id: 'devices-ack' },
     'Done — my devices are set up');
+
+  // Meeting on a relay, with no route carried: only the device that opens the
+  // page needs Tailscale. The Monitor phone needs nothing.
+  if (relay && !carried) {
+    return {
+      state: 'now',
+      title: 'Put the device you watch from on Tailscale',
+      tag: 'needs you',
+      body: [
+        el('p', { class: 'step-say' }, 'The address this box publishes only opens on devices signed in to your Tailscale account. So install Tailscale on whatever you will ', el('b', {}, 'watch from'), ': a laptop, a tablet, someone else’s phone.'),
+        el('p', { class: 'step-say' }, 'The phone that stays with the pet needs nothing extra. It finds the Viewer through a meeting point.'),
+        goLink(LINK.download, 'Install Tailscale'),
+        peerBox ? el('p', { class: 'step-say' }, 'Signed in to your network right now:') : null,
+        peerBox,
+        el('p', { class: 'step-say' }, 'Tawny cannot see from here which of those you plan to watch on, so this step is yours to close:'),
+        ack
+      ]
+    };
+  }
 
   return {
     state: 'now',
@@ -1058,6 +1117,7 @@ function stepWatch(data) {
           el('li', {}, 'On the old phone you are leaving with the pet: open Tawny, choose The Monitor, and let it use the camera. It shows a QR code.'),
           el('li', {}, 'On the device you are watching from: open the address, choose Viewer, and press Scan.'),
           el('li', {}, 'Point it at the phone’s QR code. That is the pairing done — video, sound, and hold-to-talk back. A code lasts ten minutes; after that the phone shows a fresh one.'))),
+      viaRelay(data) ? el('p', { class: 'step-say' }, 'The two find each other through a meeting point (see that panel on this page) and the video then goes straight between them. It never passes through this box unless a network forces it onto the video relay.') : null,
 
       why('It does not open, or it stops working later',
         'The first time, give it a minute: Tailscale fetches a certificate for the name on the first request, and until it lands the page can fail or warn. The device you open it on needs Tailscale signed in to the same account with MagicDNS on — if the name resolves nowhere, MagicDNS is probably off for the whole account (login.tailscale.com/admin/dns).',
@@ -1601,14 +1661,15 @@ function renderVerdict(data, defs) {
   // wrong on its own.
   const failed = defs.some((d) => d.state === 'bad');
   const pending = (tailscale.pendingRoutes || []).length > 0;
-  const badLan = !lan.cidr || lan.looksLikeDockerBridge;
+  const relay = viaRelay(data);
+  const badLan = !relay && (!lan.cidr || lan.looksLikeDockerBridge);
   // Must agree with setupReady() in server.js — that one decides the redirect
   // from "/", this one decides the banner, and a banner saying "ready" over a
   // page that keeps bouncing you back to setup is worse than either being
   // wrong alone.
   const carried = (tailscale.approvedRoutes || []).length ||
     (tailscale.routeCoveredBy || []).length;
-  const undecided = !carried && tailscale.routeChoice === 'unset';
+  const undecided = !relay && !carried && tailscale.routeChoice === 'unset';
   const allGood = tailscale.loggedIn && tailscale.reachable && !failed && !pending
     && !badLan && !undecided && !!tailscale.dnsName
     // dnsName exists as soon as MagicDNS is on; the address only *works* once
@@ -1633,7 +1694,7 @@ function renderVerdict(data, defs) {
       extra.append(openLink(finishUrl));
     } else {
       set('ok', ICONS.tick, 'Tawny is ready',
-        'Everything is connected. Open this on whatever you want to watch from — step 5 walks through pairing the camera phone.');
+        'Everything is connected. Open this address on whatever you want to watch from. Step 5 walks through pairing the camera phone.');
       extra.append(openLink(finishUrl));
       maybeCelebrate();
     }
@@ -1658,13 +1719,16 @@ function renderVerdict(data, defs) {
   }
   if (!tailscale.loggedIn) {
     set('warn', ICONS.bang, 'Start here',
-      tailscale.configured
-        ? 'Tawny is installed and running. It needs to join your Tailscale network before you can watch from anywhere — step 2 below.'
-        : 'Tawny is running on this Wi-Fi. Step 2 below connects it to your Tailscale network so you can watch from anywhere.');
+      relay
+        ? 'This box is running, and phones with the Tawny app can already pair through its meeting point. To watch in a browser it needs a secure address: step 2 connects it to your Tailscale network, which gives it one.'
+        : tailscale.configured
+          ? 'Tawny is installed and running. It needs to join your Tailscale network before you can watch from anywhere — step 2 below.'
+          : 'Tawny is running on this Wi-Fi. Step 2 below connects it to your Tailscale network so you can watch from anywhere.');
     return;
   }
   set('warn', ICONS.bang, 'Not finished yet',
-    'Tawny is running on this Wi-Fi. Follow the steps below to watch from anywhere.');
+    relay ? 'This box is running. Follow the steps to get the secure address a browser needs.'
+      : 'Tawny is running on this Wi-Fi. Follow the steps below to watch from anywhere.');
 }
 
 /** A bar per step, and "Step 3 of 5" — so the page says where you are. */
@@ -1724,6 +1788,9 @@ function render(data) {
 
   host.textContent = '';
   defs.forEach((d, i) => host.append(stepRow(i + 1, d, i === openIdx, i)));
+  document.getElementById('steps-title').textContent = privOn ? 'Your own servers' : 'Watch from outside your home';
+  document.getElementById('steps-sub').hidden = privOn;
+  renderBox(data);
 
   // Nothing to step back to from the first one, and a dead control is worse
   // than no control.
@@ -1746,11 +1813,102 @@ function render(data) {
   // Only worth offering once we know there is nothing to finish here.
   document.getElementById('skip-line').hidden = data.tailscale.loggedIn || privOn;
 
+}
+
+/* ------------------------------------------------------------ on this box */
+//
+// What the container runs, in the operator's terms, with the addresses they
+// will actually need to copy. The steps say what to do; this says what is
+// there. Rebuilt only when something in it changed, so a Copy button is never
+// swapped out from under a click.
+
+function svcRow({ name, say, chip, chipKind, lines }) {
+  return el('div', { class: 'svc' },
+    el('div', { class: 'svc-head' },
+      el('h3', {}, name),
+      el('span', { class: `chip is-${chipKind}` }, chip)),
+    el('p', { class: 'svc-say' }, say),
+    ...(lines || []).filter(Boolean));
+}
+
+function addrLine(label, text) {
+  return el('div', { class: 'svc-addr' },
+    el('span', { class: 'svc-addr-label' }, label),
+    copyRow(text));
+}
+
+/** The addresses this box answers on, from what the server knows. */
+function boxAddresses(data) {
+  const ts = data.tailscale || {};
+  const lanIp = data.lan && !data.lan.looksLikeDockerBridge ? data.lan.ip : null;
+  const port = data.port || 8099;
+  const here = location.protocol === 'http:' && !/^(localhost|127\.)/.test(location.hostname) ? location.host : null;
+  const lanHost = lanIp ? `${lanIp}:${port}` : here;
+  const secure = ts.dnsName && serveState(ts) !== false ? ts.dnsName : null;
+  return { lanHost, secure };
+}
+
+function renderBox(data) {
+  const host = document.getElementById('box-rows');
+  const { lanHost, secure } = boxAddresses(data);
+  const nostr = data.nostr || {};
+  const own = nostr.ownRelay;
   const coturn = data.coturn || {};
-  if (coturn.embedded && !coturn.listening) {
-    host.append(el('p', { class: 'warn' },
-      'The built-in relay is not answering on port 3478. Video will still work in almost every home; this only matters on networks that block direct connections.'));
+  const sig = JSON.stringify([lanHost, secure, nostr.on, own && [own.connections, own.relayed], coturn.embedded, coturn.listening, coturn.port]);
+  if (sig === renderBox._sig) return;
+  renderBox._sig = sig;
+
+  const rows = [];
+  rows.push(svcRow({
+    name: 'The Tawny page',
+    say: 'What a Viewer opens in a browser, with nothing to install. It can be the Monitor too.',
+    chip: secure ? 'secure address ready' : 'home Wi-Fi only',
+    chipKind: secure ? 'ok' : 'wait',
+    lines: [
+      secure ? addrLine('For watching', `https://${secure}/`) : null,
+      lanHost ? addrLine(secure ? 'This page, at home' : 'At home (no camera or microphone on this address)', `http://${lanHost}/`) : null
+    ]
+  }));
+
+  if (own) {
+    const busy = own.connections > 0;
+    rows.push(svcRow({
+      name: 'Meeting point',
+      say: 'A relay of your own, where your devices leave each other sealed notes to get connected. It keeps nothing, and carries nothing but Tawny.',
+      chip: busy ? `${own.connections} connected` : 'on',
+      chipKind: 'ok',
+      lines: [
+        secure ? addrLine('From anywhere on your Tailscale', `wss://${secure}${own.path}`) : null,
+        lanHost ? addrLine('At home', `ws://${lanHost}${own.path}`) : null,
+        el('p', { class: 'svc-note' }, own.relayed
+          ? `${own.relayed} sealed ${own.relayed === 1 ? 'note' : 'notes'} passed along since it started.`
+          : 'Nothing has passed through it yet.')
+      ]
+    }));
+  } else if (nostr.on) {
+    rows.push(svcRow({
+      name: 'Meeting point',
+      say: 'This box’s own relay is switched off (TAWNY_RELAY=off). Your devices meet on the relays listed under Meeting points.',
+      chip: 'off', chipKind: 'off'
+    }));
   }
+
+  rows.push(svcRow({
+    name: 'Video relay',
+    say: 'Only used when two devices cannot connect to each other directly, which some mobile and office networks cause. Then the encrypted video is passed through here.',
+    chip: !coturn.embedded ? 'off' : coturn.listening ? `on, port ${coturn.port}` : 'not answering',
+    chipKind: !coturn.embedded ? 'off' : coturn.listening ? 'ok' : 'bad',
+    lines: [
+      coturn.embedded && !coturn.listening
+        ? el('p', { class: 'svc-note' }, `Nothing is answering on port ${coturn.port}. Video still works in almost every home; this only matters on networks that block direct connections.`)
+        : !coturn.embedded
+          ? el('p', { class: 'svc-note' }, 'Switched off (TURN_EMBEDDED). Most homes never need it.')
+          : null
+    ]
+  }));
+
+  host.textContent = '';
+  host.append(...rows);
 }
 
 let timer = null;

@@ -8,9 +8,13 @@
 
 # 🦉 Tawny Docker
 
-Run your own Tawny — the two-way pet monitor — as a container on a box at home.
-No account, no domain, no port forwarding, no certificates. It runs over your
-Tailscale.
+Run your own Tawny, the two-way pet monitor, as a container on a box at home.
+No account, no domain, no port forwarding, no certificates.
+
+> [!IMPORTANT]
+> **This branch is experimental (DevOps).** It adds meeting points: devices find
+> each other through a Nostr relay, and this box runs one of its own. The
+> released image and apps do not have this yet.
 
 **A pet monitor with no paywalls.** No subscription, no locked features, no ads,
 nothing hosted by anyone else. You point an old phone at the pet and watch from
@@ -77,6 +81,21 @@ only file you need from this repo is `docker-compose.yml`.
 
 ---
 
+## 📦 What the box runs
+
+Three small services, all in the one container. `/setup` shows each one live.
+
+| | What it does | Sees your video? |
+|---|---|---|
+| **The Tawny page** | What a Viewer opens in a browser, with nothing to install. It can be the Monitor too. | No |
+| **A meeting point** | A relay of your own at `/relay`. Your devices leave each other sealed notes on it to get connected. It carries only Tawny's notes and stores nothing. | No |
+| **A video relay** | Only when two devices cannot connect directly (some mobile and office networks). Then the encrypted video passes through here. | Only encrypted |
+
+In the normal case the video goes straight between your two devices and never
+touches the box.
+
+---
+
 ## 👷 Setup
 
 Once. After this, watching is: open the app on the phone, open a URL on the
@@ -98,32 +117,23 @@ echo 'TS_AUTHKEY=tskey-auth-xxxxxxxxxxxx' > .env
 docker compose up -d
 ```
 
-Pin a version with `TAWNY_TAG=2.0.3` in `.env` instead of tracking `latest`;
-upgrade later with `docker compose pull && docker compose up -d`. On start the
-container joins your tailnet as node `tawny`, detects its LAN, and publishes the
-app; `docker logs tawny` prints the URL. Advertising that LAN into the tailnet —
-what lets you watch from outside the house — is off until you say so: `/setup`
-asks, once, and remembers the answer.
+Pin a version with `TAWNY_TAG` in `.env` instead of tracking `latest`; upgrade
+later with `docker compose pull && docker compose up -d`. On start the container
+joins your tailnet as node `tawny` and publishes the page; `docker logs tawny`
+prints the address.
 
-**4. Approve the subnet route, and disable key expiry.** Open
-`http://<box>:8099/setup` from the LAN — it shows live status and names the
-exact next step. Until the route is approved at
-<https://login.tailscale.com/admin/machines> → **tawny** → **Edit route
-settings** → tick the subnet, a remote Viewer can't reach the phone. While
-you're in that same **⋯** menu, also choose **Disable key expiry** — Tawny
-runs unattended, and without this Tailscale logs it out roughly every 180
-days, silently breaking remote access until someone notices and pastes a
-fresh key in `/setup` or `.env`. If `/setup` says HTTPS isn't on, step 2 was
-skipped — turn it on; Tawny retries `tailscale serve` every few seconds while
-`/setup` is open, so no restart is needed.
+**4. Open `http://<box>:8099/setup`** from your home network. It shows what the
+box is running, tests every meeting point from your browser, and names the next
+step. If it says HTTPS isn't on, step 2 was skipped: turn it on and keep the
+page open, it retries by itself. While you are in the Tailscale admin console,
+open **tawny** → **⋯** → **Disable key expiry**: Tawny runs unattended, and
+without this Tailscale logs it out roughly every 180 days.
 
-**5. Put your devices on the tailnet.** Every viewing device and the Monitor
-phone need Tailscale, signed into the same tailnet, with subnet routes accepted
-(Linux: `tailscale up --accept-routes`). Nothing else on the Monitor phone
-changes — leave Tawny's Servers screen blank.
+**5. Put the device you watch from on your tailnet.** The `https://…ts.net`
+address only opens on devices signed in to your Tailscale. The Monitor phone
+needs nothing: it finds the Viewer through a meeting point.
 
-Setup survives restarts and DHCP changes: identity lives in the `tawny-data`
-volume, the route follows the LAN.
+Setup survives restarts: the box's identity lives in the `tawny-data` volume.
 
 ---
 
@@ -142,6 +152,54 @@ Tailscale.
 
 **Recommended:** give the Monitor phone a DHCP reservation. Its address is baked
 into each pairing code; a lease change breaks the code and forces a rescan.
+
+---
+
+## 🤝 Meeting points
+
+Before any video flows, two devices have to find each other. Each leaves the
+other sealed notes on a relay (a [Nostr](https://github.com/nostr-protocol/nips)
+relay) until they are connected. A relay sees that two random-looking keys are
+talking, and when. It cannot read the notes, and your pairing key, addresses
+and video never go through it.
+
+Out of the box the page uses **this box's own relay** plus **three public
+relays**, and devices meet on any one they share. `/setup` tests each one from
+your browser and shows which deliver. Relays that refuse or drop Tawny's notes
+are left out automatically.
+
+| Setting (`.env`) | |
+|---|---|
+| `TAWNY_RELAY=off` | Don't run the relay on this box. |
+| `TAWNY_NOSTR_RELAYS=wss://a.example,wss://b.example` | Use these instead of the three public ones. |
+| `TAWNY_ONLY_THIS_BOX=on` | **This box only**: no public relay is used, whatever the line above says. See below before switching it on. |
+| `TAWNY_NOSTR_MODE=off` | No relays at all: pair the old way, which needs the direct path below. |
+
+### Only this box
+
+`TAWNY_ONLY_THIS_BOX=on` sends pairing through this box and nowhere else. There
+is then no public relay to fall back on, so check three things first. `/setup`
+→ **Meeting points** → **Use only this box** shows each one live:
+
+1. **This box's relay delivers.** The page sends a sealed test note through it
+   from your browser. If that fails, don't switch it on.
+2. **Devices away from home can reach the box.** That means Tailscale (or your
+   own VPN or proxy) on every device that leaves the house. At home, the box's
+   Wi-Fi address is enough.
+3. **The Tawny app knows the box's relay.** The app keeps its own relay list.
+   Enter the box's relay address in it (Diagnostics → Servers → Nostr relays),
+   then turn on **Use only my relays** there. The app tests the relay from the
+   phone before it lets you.
+
+The same switch exists in the apps on their own: **Use only my relays** in the
+Servers screen (phone) or Servers sheet (desktop). It turns off Tawny's backup
+server and Tawny's video relay as well, and is only switched on after a relay
+test from that device passes.
+
+**The direct path (optional).** Before meeting points, a Viewer outside the
+house had to reach the Monitor phone's own address, so the box advertised your
+home network into the tailnet as a subnet route. That still exists as step 3 on
+`/setup`, off by default, for anyone who wants the extra route.
 
 ---
 
@@ -164,8 +222,8 @@ first so the relay check can bind port 3478.
 
 | Port | What |
 |---|---|
-| 8099 | the app, plain HTTP. `tailscale serve` terminates TLS in front of it and reaches it on `localhost`; on your LAN it is where `/setup` lives. |
-| 3478, 49160-49200/udp | the built-in relay — fallback for a network that blocks direct UDP. Nothing to forward. |
+| 8099 | the page and the meeting point (`/relay`), plain HTTP. `tailscale serve` terminates TLS in front of it and reaches it on `localhost`; on your LAN it is where `/setup` lives. |
+| 3478, 49160-49200/udp | the video relay, a fallback for a network that blocks direct connections. Nothing to forward. |
 
 No HTTPS port on the container. TLS is Tailscale's.
 
@@ -183,7 +241,7 @@ next step.
 | `/setup`: "leftover identity — needs a hand" (or a join that hangs then fails despite a good key) | A Tailscale identity from an earlier run is stuck in `tawny-data` and the coordination server won't take it back. Tawny normally clears it automatically; if it can't, press **Reset Tailscale identity** on `/setup`, or `docker exec <container> rm -rf /data/tailscale` and restart. The old state is kept at `/data/tailscale.broken-…`. |
 | `https://tawny.<tailnet>.ts.net` won't open, or `/setup`: `serve FAILED` re HTTPS/MagicDNS | Step 2 skipped. Enable MagicDNS then HTTPS Certificates, and keep `/setup` open — it retries and publishes within seconds, no restart. |
 | Address opens on the box but not on your laptop/phone | That device also needs Tailscale up with MagicDNS on. On the box's LAN, `http://<box>:8099` works (no talk-back). |
-| Viewer loads, "Join" hangs, no video | Subnet route not approved yet (`/setup` confirms). If approved, check the Viewer has `--accept-routes`. |
+| Viewer loads, "Join" hangs, no video | Open `/setup` → **Meeting points** → **Test again**. If none deliver from that network, the two devices have no relay in common: check the Monitor phone's Servers screen lists one that works. |
 | "Pairing code expired" | Phone unreachable — usually its IP changed: show a fresh code. Confirm it's on the **same** Wi-Fi as the box, not a guest VLAN (that blocks the phone's relay). |
 | `/setup`: LAN looks like a Docker bridge (172.16–172.31, `br-`) | Auto-detect failed. Set `TS_ROUTES=192.168.1.0/24` (your real LAN) in `.env`, `docker compose up -d`. |
 | Talk-back dead, watching fine | You opened `http://…:8099` instead of the `https://…ts.net` URL. |
@@ -193,9 +251,12 @@ next step.
 
 ## 😸 No Tailscale?
 
-The app still serves on the LAN at `http://<box>:8099` and two devices on that
-Wi-Fi can pair and watch — but no talk-back (needs HTTPS) and no way in from
-outside. Tailscale is how this is meant to run; LAN-only is a fallback.
+Two phones with the Tawny app pair through a meeting point without this box's
+secure address, so the box is still useful as **their own relay**: point the
+apps at `ws://<box>:8099/relay`. What you lose is the browser Viewer away from
+home: a browser only gives a page the camera and microphone on an `https`
+address, and Tailscale is what provides one here. Your own certificate or
+reverse proxy works too; see tighter privacy below.
 
 ---
 

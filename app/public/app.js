@@ -6,6 +6,9 @@
 
 import qrcode from './vendor/qrcode.mjs';
 import { setupTip, closeTip, openSupport, setTipMode } from './tip.js';
+import { NostrSocket } from './nostr/transport.js';
+import { readHealth, recordHealth } from './nostr/relay-health.js';
+import { testRelay } from './nostr/relay-test.js';
 
 const $ = (s) => document.querySelector(s);
 const CHANNELS = 'tawny.channels.v1';
@@ -23,6 +26,8 @@ const el = {
   announce: $('#announcechip'),
   who: $('#who'), whoList: $('#who-list'), whoOld: $('#who-old'),
   myname: $('#myname'), mynameInput: $('#myname-input'),
+  servers: $('#servers'), serversNostr: $('#servers-nostr'), serversNote: $('#servers-note'),
+  serversHint: $('#servers-hint'), chServers: $('#ch-servers'), serversOnly: $('#servers-only'),
   rail: $('#rail'),
   battchip: $('#battchip'), battFill: $('#battchip .batt-fill'), battPct: $('#battchip .batt-pct'),
   sas: $('#sas'), sascode: $('#sas-code'), saschip: $('#sas-chip'),
@@ -1954,6 +1959,116 @@ const fallbackBase = () => wsBase(S.cfg.rendezvousFallback);
 // the failure that would otherwise hang forever.
 const RELAY_HELLO_MS = 8000;
 
+// ---- Nostr signaling ----------------------------------------------------------
+// config.json may carry { nostr: { relays: [...], mode, mirror } }.
+//   'prefer' (the default when relays are set): Nostr is the main way to meet.
+//            The Monitor listens on Nostr, the rendezvous and its own Wi-Fi
+//            relay at once; a Handheld tries Wi-Fi, then Nostr, and adds the
+//            rendezvous only if no Monitor has shown up on Nostr (NOSTR_GRACE_MS).
+//   'only'   Nostr and nothing else (the Tawny DevOps build, so every
+//            handshake can be watched in the inspector).
+//   'off', or no relays: the LAN relay and the rendezvous, exactly as before.
+// The relays come from the build, or from the user's own list (Android's
+// Servers screen; Desktop's Servers panel, which rewrites config.json itself).
+// See public/nostr/transport.js.
+const NOSTR_URL = /^wss?:\/\/[^\s/?#]+(?:\/[^\s?#]*)?$/;
+const MIRROR_URL = /^http:\/\/(127\.\d+\.\d+\.\d+|localhost|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d{1,5})?\/[^\s]*$/;
+function cleanNostr(j) {
+  if (!j || typeof j !== 'object') return null;
+  const relays = (Array.isArray(j.relays) ? j.relays : [])
+    .filter((u) => typeof u === 'string' && NOSTR_URL.test(u.trim())).map((u) => u.trim()).slice(0, 5);
+  if (!relays.length) return null;
+  const mode = j.mode === 'only' || j.mode === 'off' ? j.mode : 'prefer';
+  // The DevOps mirror gets every opened envelope, so it is only ever honoured
+  // on this machine or the LAN: a stray setting can never ship them elsewhere.
+  const mirror = typeof j.mirror === 'string' && MIRROR_URL.test(j.mirror) ? j.mirror : '';
+  return { relays, mode, mirror };
+}
+const nostrOnly = () => S.cfg.nostr?.mode === 'only';
+const nostrPrefer = () => S.cfg.nostr?.mode === 'prefer';
+const NOSTR_GRACE_MS = 8000;
+// ...but when not one relay has even connected by now (all down, a blocked
+// network, a typo in the user's list), there is nothing to wait for.
+const NOSTR_DEAD_MS = 3000;
+const nostrAlive = () => S.signals.some((s) => s.tag === 'nostr' && !s.dead);
+
+/**
+ * Handheld: start the Nostr leg of the race, and give it NOSTR_GRACE_MS to
+ * produce a Monitor before the rendezvous is dialled as well. Whichever finds
+ * the Monitor first is committed to (commitTransport) and the rest are closed.
+ */
+function viewerStartNostr() {
+  if (S.committedTag || nostrAlive()) return;
+  const nostr = openSignal(null, 'nostr');
+  // Only my relays: there is no rendezvous behind Nostr, by the user's choice.
+  if (nostrOnly()) { watchOnlyMode(nostr); return; }
+  const rv = rendezvousBase();
+  if (!rv) return;
+  clearTimeout(S.raceTimer);
+  const addRendezvous = (why) => {
+    if (S.committedTag || S.signals.some((s) => s.tag === 'cloud' && !s.dead)) return;
+    clearTimeout(S.raceTimer);
+    diag(`${why}; adding the rendezvous`);
+    openSignal(rv, 'cloud');
+  };
+  S.raceTimer = setTimeout(() => {
+    const n = S.signals.find((s) => s.tag === 'nostr' && !s.dead);
+    if (n && n.ws?.relaysUp?.() === 0) return addRendezvous('no nostr relay reachable');
+    S.raceTimer = setTimeout(() => addRendezvous('no Monitor on nostr yet'), NOSTR_GRACE_MS - NOSTR_DEAD_MS);
+  }, NOSTR_DEAD_MS);
+}
+
+/**
+ * "Only my relays": the user asked for pairing to go through their own relays
+ * and nothing else, so there is no fallback, by design. When those relays do
+ * not answer, or the other device is not on them, the one honest thing left is
+ * to say so (once per socket) instead of waiting in silence.
+ */
+const ONLY_DEAD_MS = 9000;          // the relay tests take up to ~6 s
+const ONLY_NO_MONITOR_MS = 16000;   // after that: relays fine, nobody there
+function watchOnlyMode(entry) {
+  if (!entry) return;
+  clearTimeout(S.onlyTimer);
+  const say = (key, why) => {
+    if (entry.onlyNoted) return;
+    entry.onlyNoted = true;
+    diag(`only-my-relays: ${why}; NOT falling back`);
+    toast(TawnyT.t(key), 9000);
+  };
+  S.onlyTimer = setTimeout(() => {
+    if (entry.dead || S.closing) return;
+    if (entry.ws?.relaysUp?.() === 0) return say('w_toast_only_down', 'none of the user\'s relays answered');
+    if (S.role !== 'viewer') return;
+    S.onlyTimer = setTimeout(() => {
+      if (entry.dead || S.closing || S.peers.size) return;
+      say('w_toast_only_nobody', 'relays work, no Monitor on them');
+    }, ONLY_NO_MONITOR_MS);
+  }, ONLY_DEAD_MS);
+}
+
+// init() reads config.json behind an await, and the native shell's
+// tawnyStart() can call start() before that lands. start() waits for it, a
+// bounded moment, so the transports it picks come from the real config.
+let cfgLoaded;
+const cfgReady = new Promise((r) => { cfgLoaded = r; });
+const waitForConfig = () => Promise.race([cfgReady, new Promise((r) => setTimeout(r, 3000))]);
+
+function newNostrSocket() {
+  const sock = new NostrSocket({
+    channelKey: S.channel.key,
+    role: S.role,
+    roomId: S.roomId,
+    relays: S.cfg.nostr.relays,
+    mirror: S.cfg.nostr.mirror,
+    label: `${S.role === 'station' ? 'monitor' : 'handheld'}-${S.nativeShell ? 'phone' : 'desktop'}`,
+    log: diag,
+  });
+  // Each relay's test result, for the Android Servers screen (this page keeps
+  // its own copy in relay-health.js and decides on that).
+  sock.onrelays = (report) => tellNative('relays', { relays: report.filter((r) => r.v !== 'testing' && r.v !== 'skipped') });
+  return sock;
+}
+
 /**
  * Give up on the user's relay and use the built-in one.
  *
@@ -2077,7 +2192,11 @@ const SAS_TRIES = 12;          // ~5s at 400ms once connected
 const SAS_WAIT_MS = 60000;     // ICE gets this long before the code is given up on
 
 async function showSas(peer, attempt = 0, since = Date.now()) {
-  if (peer.transport?.tag !== 'cloud') {          // LAN needs no SAS
+  // Every path that runs through someone else's server gets a code: the
+  // rendezvous, and Nostr relays (sealed messages make a swap there far harder,
+  // but the code is what lets a person see it did not happen). Only the LAN
+  // path, where the Monitor is its own relay, is skipped.
+  if (!peer.transport || peer.transport.tag === 'lan') {
     if (!attempt) diag(`sas skipped: transport=${peer.transport?.tag || 'none'}`);
     return;
   }
@@ -2311,8 +2430,8 @@ function openSignal(base, tag) {
   const canFallBack = () => tag === 'cloud' && !entry.usingFallback && !!fallbackBase();
   const dial = () => {
     if (entry.dead || S.closing) return;
-    diag(`dial ${tag} ${String(entry.base || 'same-origin').replace(/^wss?:\/\//, '')} room=${S.roomId}`);
-    const ws = new WebSocket(wsURLFor(entry.base));
+    diag(`dial ${tag} ${tag === 'nostr' ? S.cfg.nostr.relays.join(' ') : String(entry.base || 'same-origin').replace(/^wss?:\/\//, '')} room=${S.roomId}`);
+    const ws = tag === 'nostr' ? newNostrSocket() : new WebSocket(wsURLFor(entry.base));
     entry.ws = ws;
     ws.onopen = async () => {
       entry.retry = 0;
@@ -2398,6 +2517,16 @@ function openSignal(base, tag) {
         return;
       }
 
+      // A Handheld still racing on Nostr: the rendezvous was only the backup,
+      // so its refusal (no Monitor there, full, expired ticket) ends that leg,
+      // not the session.
+      if (S.role === 'viewer' && tag === 'cloud' && nostrAlive() &&
+          [4003, 4004, 4008, 4010].includes(ev.code)) {
+        diag(`cloud backup refused ${ev.code}; staying on nostr`);
+        closeSignal(entry);
+        return;
+      }
+
       // Fatal close codes: for a Handheld (one transport) the session is over;
       // for the Watcher, a bad cloud socket must NOT tear down a healthy LAN one.
       // 4010 joins the fatal set: the relay is answering and has told us the
@@ -2472,6 +2601,16 @@ function openSignal(base, tag) {
 
       const wait = Math.min(1000 * 2 ** entry.retry++, 15000);
 
+      // Handheld with Nostr: a LAN leg that fails (or a session that moved off
+      // the Wi-Fi) goes to Nostr, with the rendezvous behind it.
+      if (S.role === 'viewer' && entry.tag === 'lan' && (nostrPrefer() || nostrOnly()) &&
+          (!S.committedTag || entry.retry >= 2)) {
+        clearTimeout(S.raceTimer);
+        closeSignal(entry);
+        S.committedTag = null;
+        viewerStartNostr();
+        return;
+      }
       // Handheld: fall to the rendezvous when the LAN attempt keeps failing —
       // whether it never committed, or the session has moved off Wi-Fi.
       if (S.role === 'viewer' && entry.tag === 'lan' && rendezvousBase() &&
@@ -2482,7 +2621,7 @@ function openSignal(base, tag) {
         openSignal(rendezvousBase(), 'cloud');
         return;
       }
-      if (S.role === 'viewer' && !S.committedTag && entry.tag === 'lan' && !rendezvousBase()) {
+      if (S.role === 'viewer' && !S.committedTag && entry.tag === 'lan' && !rendezvousBase() && !nostrAlive()) {
         return bail(TawnyT.t('w_bail_wifi_only_code'));
       }
 
@@ -2529,9 +2668,30 @@ function connectAll() {
   // one, not the build's default.
   S.relayBase = S.relayBase || S.linkRelay || wsBase(S.cfg.rendezvous);
   const rv = rendezvousBase();
+  if (nostrOnly()) {
+    // Only my relays: no rendezvous at all. The same-Wi-Fi leg stays, because
+    // that is the two devices talking to each other with nobody in between.
+    if (S.role === 'station') {
+      if (S.signalUrl) openSignal(S.signalUrl, 'lan');
+      watchOnlyMode(openSignal(null, 'nostr'));
+      status(TawnyT.t('w_status_waiting'), 'wait');
+      return;
+    }
+    if (S.signalUrl) {
+      openSignal(S.signalUrl, 'lan');
+      S.raceTimer = setTimeout(viewerStartNostr, 2500);
+    } else {
+      S.committedTag = 'nostr';
+      watchOnlyMode(openSignal(null, 'nostr'));
+    }
+    return;
+  }
   if (S.role === 'station') {
     if (S.signalUrl) openSignal(S.signalUrl, 'lan');
+    // The rendezvous stays open beside Nostr: it is the Handhelds' backup, and
+    // its ticket is what the TURN service checks before relaying media.
     if (rv) openSignal(rv, 'cloud');
+    if (nostrPrefer()) openSignal(null, 'nostr');
     if (!S.signals.length) return bail(TawnyT.t('w_bail_not_on_wifi'));
     status(TawnyT.t('w_status_waiting'), 'wait');
     return;
@@ -2547,6 +2707,17 @@ function raceTransports() {
   clearTimeout(S.raceTimer);
   S.committedTag = null;
   const rv = rendezvousBase();
+  if (nostrPrefer()) {
+    // Same Wi-Fi first, as before; then Nostr; the rendezvous only if Nostr
+    // has not produced a Monitor in time (viewerStartNostr).
+    if (S.signalUrl) {
+      openSignal(S.signalUrl, 'lan');
+      S.raceTimer = setTimeout(viewerStartNostr, 2500);
+    } else {
+      viewerStartNostr();
+    }
+    return;
+  }
   if (S.signalUrl) {
     const lan = openSignal(S.signalUrl, 'lan');
     if (!rv) return;                     // LAN-only build: nothing to fall back to
@@ -2594,6 +2765,9 @@ async function fetchIce() {
   // Tighter privacy can forbid asking the rendezvous for TURN at all; the STUN
   // and TURN the user typed are then the whole list (see iceServers()).
   if (S.cfg.turnFetch === false) { S.ice = []; return; }
+  // Only my relays: someone else's rendezvous is not asked for anything, TURN
+  // included. A self-hosted page still asks its own box.
+  if (nostrOnly() && rv !== sameOriginBase()) { S.ice = []; return; }
   const httpBase = rv.replace(/^ws/i, 'http').replace(/\/+$/, '');
   try {
     const q = new URLSearchParams({ room: S.roomId });
@@ -2993,6 +3167,136 @@ if (el.peercount) {
 $('#who-close')?.addEventListener('click', () => closeSheet(el.who));
 $('#who-rename')?.addEventListener('click', () => { closeSheet(el.who); openMyName(); });
 $('#myname-save')?.addEventListener('click', saveMyName);
+
+// ---- Servers (Tawny Desktop) ------------------------------------------------------
+// Only where config.json says the host keeps settings: Tawny Desktop's loopback
+// server stores them (GET/PUT /settings) and rebuilds config.json and the CSP
+// from them. The page cannot change its own CSP, so a save reloads it.
+async function openServers() {
+  const cur = await readSettings();
+  el.serversNostr.value = (cur.nostrRelays || []).join('\n');
+  if (el.serversOnly) el.serversOnly.checked = cur.nostrOnly === true;
+  const defaults = (cur.defaults || []).join(', ');
+  el.serversNostr.placeholder = (cur.defaults || []).join('\n');
+  el.serversHint.textContent = TawnyT.t('w_srv_hint') + (defaults ? ' ' + TawnyT.t('w_srv_defaults', defaults) : '');
+  showRelayHealth((cur.nostrRelays || []).length ? cur.nostrRelays : cur.defaults || []);
+  note(el.serversNote, '');
+  openSheet(el.servers);
+  el.serversNostr.focus();
+}
+
+async function readSettings() {
+  try {
+    const r = await fetch('settings', { cache: 'no-store' });
+    if (r.ok) return await r.json();
+  } catch {}
+  return { nostrRelays: [], defaults: [], nostrOnly: false };
+}
+async function writeSettings(body) {
+  try {
+    const r = await fetch('settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    return r.ok;
+  } catch { return false; }
+}
+
+// What this device found the last time it tried each relay (see relay-health.js).
+function showRelayHealth(urls) {
+  const list = $('#servers-health');
+  if (!list) return;
+  const h = readHealth();
+  list.replaceChildren(...urls.map((u) => {
+    const r = h[u];
+    let host = u;
+    try { host = new URL(u.replace(/^ws/, 'http')).host; } catch {}
+    const li = document.createElement('li');
+    li.className = 'relay-' + (r?.v || 'untested');
+    li.textContent = !r ? TawnyT.t('w_srv_h_untested', host)
+      : r.v === 'ok' ? TawnyT.t('w_srv_h_ok', host, r.ms ?? 0)
+      : r.v === 'refused' ? TawnyT.t('w_srv_h_refused', host, r.why || '-')
+      : r.v === 'no-echo' ? TawnyT.t('w_srv_h_silent', host)
+      : TawnyT.t('w_srv_h_unreachable', host);
+    return li;
+  }));
+  $('#servers-health-wrap').hidden = urls.length === 0;
+}
+
+async function saveServers() {
+  const list = el.serversNostr.value.split(/[\s,]+/).map((u) => u.trim()).filter(Boolean);
+  const bad = list.find((u) => !NOSTR_URL.test(u));
+  if (bad) { note(el.serversNote, TawnyT.t('w_srv_err_url', bad)); el.serversNostr.focus(); return; }
+  if (list.length > 5) { note(el.serversNote, TawnyT.t('w_srv_err_many')); el.serversNostr.focus(); return; }
+  // "Only my relays" is never switched on blind. The page cannot reach a
+  // relay that is not saved yet (its CSP names the saved ones), so: save the
+  // list with the switch off, reload, test every relay from this computer,
+  // and only then ask (checkOnlyMode). Already on, same list: nothing to ask.
+  const wantOnly = !!el.serversOnly?.checked;
+  if (wantOnly && !list.length) { note(el.serversNote, TawnyT.t('w_only_err_empty')); el.serversNostr.focus(); return; }
+  const cur = await readSettings();
+  const same = cur.nostrOnly === true && JSON.stringify(cur.nostrRelays || []) === JSON.stringify(list);
+  if (!await writeSettings({ nostrRelays: list, nostrOnly: wantOnly && same })) { note(el.serversNote, TawnyT.t('w_srv_err_save')); return; }
+  try {
+    if (wantOnly && !same) sessionStorage.setItem(ONLY_PENDING, '1'); else sessionStorage.removeItem(ONLY_PENDING);
+  } catch {}
+  location.reload();
+}
+
+// ---- "Only my relays": test, then ask ----------------------------------------------
+const ONLY_PENDING = 'tawny.onlyPending';
+const relayHostName = (u) => { try { return new URL(u.replace(/^ws/, 'http')).host; } catch { return u; } };
+
+/** After the reload that follows Save: test the user's relays, then ask. */
+async function checkOnlyMode() {
+  const sheet = $('#only');
+  const list = $('#only-list');
+  const verdict = $('#only-verdict');
+  const terms = $('#only-terms');
+  const go = $('#only-go');
+  if (!sheet || !list) return;
+  const cur = await readSettings();
+  const relays = (cur.nostrRelays || []).slice(0, 5);
+  if (!relays.length) return;
+  terms.hidden = true; go.hidden = true; go.disabled = true;
+  verdict.textContent = TawnyT.t('w_only_testing');
+  const rows = relays.map((u) => {
+    const li = document.createElement('li');
+    li.className = 'relay-untested';
+    li.textContent = TawnyT.t('w_only_row_testing', relayHostName(u));
+    return li;
+  });
+  list.replaceChildren(...rows);
+  openSheet(sheet);
+  const results = await Promise.all(relays.map(async (u, i) => {
+    const v = await testRelay(u);
+    const host = relayHostName(u);
+    // The Servers sheet's "last check" shows this test too.
+    recordHealth(u, v.ok ? 'ok' : v.why === 'refused' ? 'refused' : v.why === 'connect' ? 'unreachable' : 'no-echo', v.ok ? '' : v.detail, v.ok ? v.ms : null);
+    rows[i].className = v.ok ? 'relay-ok' : 'relay-refused';
+    rows[i].textContent = v.ok ? TawnyT.t('w_srv_h_ok', host, v.ms)
+      : v.why === 'refused' ? TawnyT.t('w_srv_h_refused', host, v.detail || '-')
+      : v.why === 'connect' ? TawnyT.t('w_only_row_connect', host)
+      : TawnyT.t('w_srv_h_silent', host);
+    return v;
+  }));
+  const good = results.filter((v) => v.ok).length;
+  if (!good) {
+    // Nothing delivered: the switch stays off, and the reason is on screen.
+    verdict.textContent = TawnyT.t('w_only_none');
+    $('#only-cancel').textContent = TawnyT.t('w_only_close');
+    return;
+  }
+  verdict.textContent = good === results.length ? TawnyT.t('w_only_all_ok') : TawnyT.t('w_only_some_ok', good, results.length);
+  terms.hidden = false; go.hidden = false; go.disabled = false;
+  go.onclick = async () => {
+    go.disabled = true;
+    if (!await writeSettings({ nostrRelays: relays, nostrOnly: true })) { verdict.textContent = TawnyT.t('w_srv_err_save'); go.disabled = false; return; }
+    location.reload();
+  };
+}
+$('#only-cancel')?.addEventListener('click', () => closeSheet($('#only')));
+
+$('#ch-servers')?.addEventListener('click', openServers);
+$('#servers-save')?.addEventListener('click', saveServers);
+$('#servers-cancel')?.addEventListener('click', () => closeSheet(el.servers));
 $('#myname-skip')?.addEventListener('click', () => {
   try { localStorage.setItem('tawny.nameAsked', '1'); } catch {}
   closeSheet(el.myname);
@@ -3069,12 +3373,21 @@ async function handle(m, entry) {
       // answerPeer attaches the live camera and microphone, so nothing may
       // reach it on a code that has run out. Already-known phones (a `pid` the
       // Monitor recorded when it first let them in) sail past.
-      if (S.role === 'station' && !S.peers.has(m.from) && !pairingAllowed(m)) {
+      //
+      // It asks "was this peer let in by the gate", not "is it in S.peers":
+      // every relay announces a newcomer with `peer-joined` before its offer,
+      // and that put it in S.peers, so the old `!S.peers.has(m.from)` waved
+      // straight through anyone holding an old QR or a forwarded link, long
+      // after its code had run out. Only this check sets `admitted`.
+      const known = S.peers.get(m.from);
+      if (S.role === 'station' && !known?.admitted && !pairingAllowed(m)) {
         diag(`offer refused: pairing code expired or never seen (${m.from})`);
         sig({ type: 'bye', to: m.from, reason: 'expired' }, { transport: entry });
+        if (known && !known.pc) removePeer(m.from);
         return;
       }
       const p = ensurePeer(m.from, S.role === 'station' ? 'viewer' : 'station', entry);
+      if (S.role === 'station') p.admitted = true;
       // The Handheld names its own device in the offer, for the Monitor's rail.
       // Peer-controlled text: printable ASCII only, kept short, only ever shown.
       if (S.role === 'station' && typeof m.label === 'string') {
@@ -4335,6 +4648,8 @@ function cameraConstraints(wide = screenIsWide()) {
  */
 async function start(role, opts = {}) {
   if (!S.channel) return;
+  await waitForConfig();
+  if (!S.channel) return;
   S.role = role;
   S.roster = null;
   // The Android app hands its saved name over in tawnyStart; everywhere else
@@ -5311,6 +5626,19 @@ window.tawnyStart = function (role, key, name, signalUrl, rendezvousUrl, token, 
       S.cfg.stun = S.cfg.stunCustom;
     }
     if (Array.isArray(srv.turn) && srv.turn.length) S.cfg.turn = srv.turn;
+    // Nostr relays the user typed. Kept under `nostrCustom` because init()
+    // rebuilds S.cfg from config.json after this runs (see stunCustom).
+    if (Array.isArray(srv.nostr)) {
+      const list = srv.nostr.filter((u) => typeof u === 'string' && NOSTR_URL.test(u.trim())).map((u) => u.trim()).slice(0, 5);
+      S.cfg.nostrCustom = list;
+      // "Only my relays" (Servers screen): no rendezvous behind them. It only
+      // ever applies to a list of the user's own.
+      S.cfg.nostrOnlyShell = srv.nostrOnly === true && list.length > 0;
+      if (list.length) S.cfg.nostr = cleanNostr({ ...(S.cfg.nostr || {}), relays: list, ...(S.cfg.nostrOnlyShell ? { mode: 'only' } : {}) });
+      // Tighter privacy means the user's relays or none, also when config.json
+      // landed before this and already filled in the build's.
+      else if (S.cfg.strict) S.cfg.nostr = null;
+    }
   }
   // The shell draws the QR, so the shell owns the pairing code. On a Monitor
   // that is the code on screen plus the deadline it is counting down; on a
@@ -5393,9 +5721,23 @@ window.tawnyPairCode = function (code, expMs) {
         turn: S.cfg.turn,
         strict,
         turnFetch: S.cfg.turnFetch === false || j.turnFetch === false ? false : undefined,
-        release: j.release && typeof j.release === 'object' ? j.release : null
+        release: j.release && typeof j.release === 'object' ? j.release : null,
+        // The user's own relays (Android Servers screen) replace the build's.
+        // Tighter privacy trusts no default: without a list of the user's own,
+        // there is no Nostr at all.
+        nostrCustom: S.cfg.nostrCustom,
+        nostrOnlyShell: S.cfg.nostrOnlyShell,
+        settings: j.settings === 'local',
+        nostr: S.cfg.nostrCustom?.length ? cleanNostr({ ...(j.nostr || {}), relays: S.cfg.nostrCustom, ...(S.cfg.nostrOnlyShell ? { mode: 'only' } : {}) })
+          : strict ? null : cleanNostr(j.nostr)
       };
     }
+  } catch {}
+  cfgLoaded();
+  if (el.chServers) el.chServers.hidden = !S.cfg.settings;
+  // Save on the Servers sheet asked for "only my relays": test first, then ask.
+  try {
+    if (S.cfg.settings && sessionStorage.getItem(ONLY_PENDING)) { sessionStorage.removeItem(ONLY_PENDING); checkOnlyMode(); }
   } catch {}
 
   // Pick the opening screen before any further wait, so there is no flash.

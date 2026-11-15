@@ -59,6 +59,14 @@ services:
       TAWNY_PUBLIC_IP: "${TAWNY_PUBLIC_IP:-}"
       TAWNY_TURN_URLS: "${TAWNY_TURN_URLS:-}"
       TAWNY_TURN_SECRET: "${TAWNY_TURN_SECRET:-}"
+      # Meeting points (Nostr relays). TAWNY_RELAY: this box's own relay at
+      # /relay. TAWNY_NOSTR_RELAYS: other relays, comma-separated; empty = the
+      # built-in public ones, off = none. TAWNY_NOSTR_MODE: prefer | only | off.
+      # TAWNY_ONLY_THIS_BOX=on: pair through this box and nowhere else.
+      TAWNY_RELAY: "${TAWNY_RELAY:-on}"
+      TAWNY_NOSTR_RELAYS: "${TAWNY_NOSTR_RELAYS:-}"
+      TAWNY_NOSTR_MODE: "${TAWNY_NOSTR_MODE:-prefer}"
+      TAWNY_ONLY_THIS_BOX: "${TAWNY_ONLY_THIS_BOX:-off}"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8099/healthz | grep -q '\"ok\":true'"]
       interval: 30s

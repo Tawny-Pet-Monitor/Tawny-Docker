@@ -245,6 +245,22 @@ button { font: inherit; color: inherit; cursor: pointer; }
   letter-spacing: .04em;
 }
 
+/* The Servers sheet's relay list: same field, several lines. */
+.field textarea {
+  width: 100%;
+  min-height: 92px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.field textarea:focus,
 .field input:focus {
   border-color: var(--berry);
   outline: 2px solid color-mix(in srgb, var(--berry) 30%, transparent);
@@ -336,6 +352,68 @@ button { font: inherit; color: inherit; cursor: pointer; }
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* "Servers (advanced)" under the Support card: fine-print sized on purpose, so
+   it is there for whoever looks for it and out of everyone else's way. The
+   padding keeps a full 44px target around the small text. */
+.servers-link {
+  display: block;
+  margin: 10px auto 0;
+  min-height: 44px;
+  padding: 12px 16px;
+  background: none;
+  border: 0;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.servers-link:hover { color: var(--fg); }
+.servers-link:focus-visible { outline: 2px solid var(--berry); outline-offset: 2px; border-radius: var(--r-chip); }
+
+/* Servers sheet: what this device found the last time it tried each relay.
+ * The words carry the verdict; the mark beside them only repeats it. */
+.relay-health { margin: 14px 0 0; }
+.relay-health h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--fg); }
+.relay-health ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.relay-health li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--dim);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.relay-health li::before {
+  content: "";
+  position: absolute;
+  left: 2px; top: .5em;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--dim);
+}
+.relay-health li.relay-ok { color: var(--fg); }
+.relay-health li.relay-ok::before { background: var(--sky-d); border-color: var(--sky-d); }
+.relay-health li.relay-refused::before,
+.relay-health li.relay-no-echo::before { background: var(--live-ink); border-color: var(--live-ink); }
+
+/* Servers sheet: "use only my relays". A real checkbox, with the consequence
+ * beside it; the whole row is the target. */
+.only-row {
+  display: flex; align-items: flex-start; gap: 12px;
+  margin: 14px 0 0; padding: 12px 0; min-height: 48px;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+.only-row input { flex: none; width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--sky-d); }
+.only-row input:focus-visible { outline: 2px solid var(--sky-d); outline-offset: 3px; }
+.only-text { display: grid; gap: 2px; }
+.only-title { font-size: 15px; font-weight: 600; color: var(--fg); }
+.only-sub { font-size: 14px; line-height: 1.45; color: var(--dim); }
+.only-results { margin-top: 4px; }
+.only-terms { margin: 10px 0 14px; padding: 0 0 0 18px; display: grid; gap: 8px; color: var(--fg); font-size: 14px; line-height: 1.45; }
 
 /* --------------------------------------------------------- support
  *

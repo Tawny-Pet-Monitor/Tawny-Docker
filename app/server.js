@@ -28,6 +28,7 @@ import {
   PRIVACY_FILE, DEFAULTS as PRIVACY_DEFAULTS, validate as validatePrivacy,
   readPrivacy, writePrivacy, redact as redactPrivacy
 } from './docker/privacy.js';
+import { createNostrRelay } from './docker/nostr-relay.js';
 
 const PORT = Number(process.env.PORT || 8099);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -64,6 +65,38 @@ const TRUST_PROXY = process.env.TRUST_PROXY !== 'off';
 // gets an address it has already proved it can reach. TURN is coturn with
 // use-auth-secret (static-auth-secret === TURN_SECRET).
 const RENDEZVOUS_URL = process.env.RENDEZVOUS_URL || '';
+
+// ------------------------------------------------------------ meeting points
+//
+// How two devices find each other before any video flows: each leaves sealed
+// envelopes for the other on a Nostr relay (public/nostr/transport.js). A
+// relay sees who is writing to whom and when, never the pairing key, an
+// address or a frame of video.
+//
+//   TAWNY_RELAY         on (default) | off — the relay inside this container,
+//                       at /relay on whatever address the client used. See
+//                       docker/nostr-relay.js: one kind, nothing stored.
+//   TAWNY_NOSTR_RELAYS  the other relays the page may use, comma-separated
+//                       wss:// URLs. Unset = three public ones that carry
+//                       Tawny's envelopes today; `off` = none, so devices
+//                       meet on this box's relay only (then the Monitor app
+//                       needs this box's relay address in its Servers screen).
+//   TAWNY_NOSTR_MODE    prefer (default) | only | off. `off` switches the
+//                       whole thing off and the page pairs as it did before.
+//   TAWNY_ONLY_THIS_BOX on | off (default) — pairing goes through this box and
+//                       nowhere else: no public relay is handed to the page,
+//                       whatever TAWNY_NOSTR_RELAYS says. /setup walks through
+//                       what to check before switching it on (the box's relay
+//                       delivers, devices away from home can reach the box,
+//                       the phone app has the box's relay address).
+//
+// Tighter privacy never adds a public relay by default: there, the list is
+// what the operator wrote, or nothing.
+const NOSTR_DEFAULT_RELAYS = ['wss://relay.primal.net', 'wss://relay.nostr.net', 'wss://relay.snort.social'];
+const NOSTR_RELAY_RE = /^wss?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~\/-]*)?$/;
+const NOSTR_MODE = ['prefer', 'only', 'off'].includes(process.env.TAWNY_NOSTR_MODE) ? process.env.TAWNY_NOSTR_MODE : 'prefer';
+const OWN_RELAY = NOSTR_MODE !== 'off' && process.env.TAWNY_RELAY !== 'off';
+const OWN_RELAY_PATH = '/relay';
 const TURN_MODE = process.env.TURN_MODE || 'auto';
 
 // ------------------------------------------------------- tighter privacy
@@ -78,6 +111,17 @@ const TURN_MODE = process.env.TURN_MODE || 'auto';
 //   - the LAN bridge as something that can be switched off;
 //   - config.json telling the page `strict`, so it trusts no default either.
 const PRIVACY_ON = process.env.TAWNY_PRIVACY === 'on';
+const ONLY_THIS_BOX = /^(on|1|true|yes)$/i.test((process.env.TAWNY_ONLY_THIS_BOX || '').trim());
+const NOSTR_PUBLIC = (() => {
+  if (NOSTR_MODE === 'off' || ONLY_THIS_BOX) return [];
+  const raw = (process.env.TAWNY_NOSTR_RELAYS || '').trim();
+  if (/^off$/i.test(raw)) return [];
+  if (!raw) return PRIVACY_ON ? [] : NOSTR_DEFAULT_RELAYS;
+  // One slot is kept for this box's own relay; the page takes five in all.
+  return raw.split(',').map((u) => u.trim()).filter((u) => NOSTR_RELAY_RE.test(u)).slice(0, OWN_RELAY ? 4 : 5);
+})();
+const NOSTR_ON = OWN_RELAY || NOSTR_PUBLIC.length > 0;
+const nostrRelay = OWN_RELAY ? createNostrRelay({ log: (l) => log(`relay: ${l}`) }) : null;
 const PRIVACY_BROKEN = process.env.TAWNY_PRIVACY_BROKEN === 'on';
 const TLS_CERT = process.env.TAWNY_TLS_CERT || '';
 const TLS_KEY = process.env.TAWNY_TLS_KEY || '';
@@ -248,6 +292,13 @@ const CONNECT_SRC = (() => {
   // published to. Named one by one, never a blanket https:/wss:. Same list as
   // Tawny Desktop's config.rs and the Android LocalWeb.kt.
   out.push(...TIP_CONNECT_SRC);
+
+  // The Nostr relays the page meets its peer on. This box's own relay is
+  // same-origin and already covered by 'self'.
+  for (const u of NOSTR_PUBLIC) {
+    const h = bareHost(u);
+    if (HOST_RE.test(h)) out.push(`${u.startsWith('ws://') ? 'ws' : 'wss'}://${h}`);
+  }
 
   // STUN/TURN hosts, listed scheme-and-host so `stun:`/`turn:`/`turns:` match.
   //
@@ -795,7 +846,22 @@ async function setupStatus() {
     tailscale,
     lan: lanInfo(),
     coturn,
+    nostr: nostrInfo(),
+    port: PORT,
     privacy: privacyInfo()
+  };
+}
+
+/** The meeting points, for /setup. Counts only: no keys, no addresses. */
+function nostrInfo() {
+  return {
+    on: NOSTR_ON,
+    mode: NOSTR_MODE,
+    onlyThisBox: ONLY_THIS_BOX,
+    ownRelay: OWN_RELAY ? { path: OWN_RELAY_PATH, ...nostrRelay.status() } : null,
+    relays: NOSTR_PUBLIC,
+    // Whether the list is ours or the operator's, so the page can say which.
+    custom: !!(process.env.TAWNY_NOSTR_RELAYS || '').trim()
   };
 }
 
@@ -1075,7 +1141,7 @@ async function withdrawRoutes() {
  * for a failure it has already recovered from, forever. Only the last record
  * for each step describes the present.
  */
-function anyStepFailing(startup, ts) {
+function anyStepFailing(startup, ts, viaRelay = false) {
   const latest = new Map();
   for (const s of startup || []) if (s && s.step) latest.set(s.step, s);
 
@@ -1089,6 +1155,9 @@ function anyStepFailing(startup, ts) {
     // a failure — recorded as ok:false only so it is impossible to miss in
     // the raw log. anyStepFailing() must not read it as broken.
     if (name === 'route_conflict') continue;
+    // The home network only matters for the optional subnet route once the
+    // devices meet on a relay.
+    if (viaRelay && (name === 'lan_detect' || name === 'tailscale_routes')) continue;
     // Live state beats the log. A container using the host's daemon never runs
     // `tailscale up` at all, so a stale failure from an earlier configuration
     // can sit in the log for ever with nothing to supersede it — while the
@@ -1109,8 +1178,13 @@ function setupReady(s) {
   if (s.privacy && s.privacy.active) return privacyReady(s);
   const ts = s.tailscale || {};
   const lan = s.lan || {};
-  if (anyStepFailing(s.startup, ts)) return false;
-  if (!lan.cidr || lan.looksLikeDockerBridge) return false;
+  // With a meeting point, a Viewer no longer needs a network path to the
+  // Monitor phone: the two find each other on a relay and connect directly.
+  // So the home network and the subnet route stop being requirements; they
+  // are the optional extra path, and only what is left below is "finished".
+  const viaRelay = !!(s.nostr && s.nostr.on);
+  if (anyStepFailing(s.startup, ts, viaRelay)) return false;
+  if (!viaRelay && (!lan.cidr || lan.looksLikeDockerBridge)) return false;
   if (!ts.configured || !ts.reachable || !ts.loggedIn || !ts.dnsName) return false;
   // A MagicDNS name exists the moment MagicDNS is switched on; the https://
   // address only *works* once `tailscale serve` is fronting our port.
@@ -1135,6 +1209,7 @@ function setupReady(s) {
   // advertising is a different matter and is caught above: anything we are
   // putting out lands in approvedRoutes (making `carried` truthy) or in
   // pendingRoutes, which has already returned false.
+  if (viaRelay && !(ts.pendingRoutes || []).length) return true;
   if ((ts.routeConflicts || []).length && !carried && ts.routeChoice !== 'lan-only') return false;
   // Remote access is off until asked for, and "off" is a legitimate finished
   // state — but only once somebody has actually chosen it. Left as a silent
@@ -1354,11 +1429,35 @@ const handler = async (req, res) => {
       // The page's own policy has no "never"; it gets auto plus no TURN at all.
       turnMode: TURN_MODE,
       rendezvous, authRequired: false,
+      // This box's relay first, at the address the client just reached us on
+      // (so it is one the client can demonstrably dial), then the others.
+      ...(NOSTR_ON ? { nostr: {
+        relays: [
+          ...(OWN_RELAY && host ? [`${proto === 'https' ? 'wss' : 'ws'}://${host}${OWN_RELAY_PATH}`] : []),
+          ...NOSTR_PUBLIC
+        ],
+        mode: NOSTR_MODE
+      } } : {}),
       ...(RELEASE ? { release: RELEASE } : {}),
       // Tighter privacy: the page must not substitute a default for anything
       // listed here — an empty STUN list means none.
       ...(PRIVACY_ON ? { strict: true, turnFetch: TURN_MODE !== 'never' } : {})
     });
+  }
+  // NIP-11: what the relay at this address is. Other Nostr software asks this
+  // before it connects, from any origin, so it carries its own CORS header.
+  if (OWN_RELAY && url.pathname === OWN_RELAY_PATH) {
+    const wantsInfo = String(req.headers.accept || '').includes('application/nostr+json');
+    const body = Buffer.from(wantsInfo ? JSON.stringify(nostrRelay.info())
+      : 'This is the Tawny relay. Devices connect to it with a WebSocket; there is nothing to see in a browser.\n');
+    res.writeHead(200, {
+      'content-type': wantsInfo ? 'application/nostr+json' : 'text/plain; charset=utf-8',
+      'content-length': body.length,
+      'access-control-allow-origin': '*',
+      'x-content-type-options': 'nosniff',
+      'cache-control': 'no-store'
+    });
+    return res.end(req.method === 'HEAD' ? undefined : body);
   }
   if (url.pathname === '/healthz') {
     return json(res, 200, { ok: true, channels: rooms.size, clients: wss.clients.size });
@@ -1557,7 +1656,10 @@ const handler = async (req, res) => {
   }
   if (url.pathname === '/setup') {
     try {
-      const body = await readFile(join(PUBLIC, 'setup.html'));
+      // Same substitution the app's own page gets: the setup page tests each
+      // meeting point from the browser, so its policy names those hosts too.
+      const body = Buffer.from(
+        (await readFile(join(PUBLIC, 'setup.html'), 'utf8')).split(CONNECT_SRC_TOKEN).join(CONNECT_SRC), 'utf8');
       res.writeHead(200, secureHeaders({
         'content-type': MIME['.html'],
         'content-length': body.length,
@@ -1802,6 +1904,16 @@ const onUpgrade = (req, socket, head) => {
     return lanBridge(req, socket, head, lan[1], port, url.search);
   }
 
+  // The Nostr relay. No Origin check, on purpose: a relay is dialled from the
+  // apps' own pages and from other origins by design, and it trusts nobody.
+  // Envelopes are sealed, only one kind is carried, and reading needs a
+  // signed sign-in (docker/nostr-relay.js).
+  if (OWN_RELAY && url.pathname.replace(/\/+$/, '') === OWN_RELAY_PATH) {
+    if (!hostAllowed(req)) return deny(421, 'Misdirected Request');
+    if (lockedOut(ip)) return deny(429, 'Too Many Requests');
+    return nostrRelay.handleUpgrade(req, socket, head, { ip, host: reqOrigin(req).host, path: OWN_RELAY_PATH });
+  }
+
   if (!/(^|\/)ws$/.test(url.pathname)) return socket.destroy();
   if (!hostAllowed(req)) return deny(421, 'Misdirected Request');
   if (!originAllowed(req)) { noteFail(ip); return deny(403, 'Forbidden'); }
@@ -2031,6 +2143,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     clearInterval(heartbeat);
     for (const ws of wss.clients) ws.close(1001, 'server shutting down');
+    nostrRelay?.close();
     let left = servers.length;
     for (const { s } of servers) s.close(() => { if (--left === 0) process.exit(0); });
     setTimeout(() => process.exit(0), 2000).unref();
@@ -2042,6 +2155,13 @@ function logSummary() {
   log(`allowed hosts: ${ALLOWED_HOSTS.length ? ALLOWED_HOSTS.join(', ') : 'any (set ALLOWED_HOSTS to pin)'}`);
   log(`stun: ${STUN.length ? STUN.join(', ') : 'none (LAN / tailnet only)'}`);
   log(`rendezvous: ${RENDEZVOUS_URL || 'derived from each request Host header'}`);
+  log(`meeting points: ${!NOSTR_ON ? 'off' : [OWN_RELAY ? `this box (${OWN_RELAY_PATH})` : '', ...NOSTR_PUBLIC].filter(Boolean).join(', ')}${NOSTR_ON ? ` [${NOSTR_MODE}]` : ''}`);
+  if (ONLY_THIS_BOX) {
+    const ignored = (process.env.TAWNY_NOSTR_RELAYS || '').trim() && !/^off$/i.test(process.env.TAWNY_NOSTR_RELAYS.trim());
+    log(`only this box: no public relay is handed out${ignored ? ' (TAWNY_NOSTR_RELAYS is ignored)' : ''}. ` +
+      (OWN_RELAY ? 'The Monitor app needs this box\'s relay address in its Servers screen; see /setup.'
+        : 'This box\'s own relay is off too (TAWNY_RELAY/TAWNY_NOSTR_MODE), so devices pair through this box\'s page only.'));
+  }
   log(LAN_BRIDGE ? `lan bridge: /lan/<private-ipv4>/<port>/ws -> the app's own relay` : 'lan bridge: off');
   log(`turn: ${
     TURN_MODE === 'never' ? 'never (tighter privacy)'
