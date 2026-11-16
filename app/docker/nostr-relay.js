@@ -205,7 +205,7 @@ export function createNostrRelay({ log = () => {}, version = '' } = {}) {
         name: 'Tawny relay',
         description: 'Carries sealed Tawny signaling envelopes (kind 21059) to their recipient. Stores nothing.',
         supported_nips: [1, 11, 40, 42],
-        software: 'https://github.com/PressF4me/Tawny-Docker',
+        software: 'https://github.com/Tawny-Pet-Monitor/Tawny-Docker',
         version,
         limitation: {
           max_message_length: RELAY_LIMITS.max_message_length,

@@ -5,7 +5,7 @@
 # defaults, so it drops straight into Portainer (Stacks -> Add stack ->
 # Repository, or -> URL) or a plain `docker compose -f`.
 #
-# The default image is the published one, ghcr.io/pressf4me/tawny:latest, built
+# The default image is the published one, ghcr.io/tawny-pet-monitor/tawny:latest, built
 # and pushed by .github/workflows/release.yml on a vX.Y.Z tag. Override
 # TAWNY_IMAGE only for a fork or private mirror — to build that image, see
 # "Building it yourself" in README.md.
@@ -15,11 +15,11 @@
 #   Portainer: Stacks -> Add stack -> Web editor (paste this) or Repository
 #   (its URL). In "Environment variables" set at least:
 #
-#     TAWNY_IMAGE = ghcr.io/pressf4me/tawny:latest   (optional — this is the default)
+#     TAWNY_IMAGE = ghcr.io/tawny-pet-monitor/tawny:latest   (optional — this is the default)
 #     TS_AUTHKEY  = tskey-auth-...   (https://login.tailscale.com/admin/settings/keys
 #                                     -> Reusable, Ephemeral OFF)
 #
-#   CLI:  echo 'TAWNY_IMAGE=ghcr.io/pressf4me/tawny:latest' >  .env
+#   CLI:  echo 'TAWNY_IMAGE=ghcr.io/tawny-pet-monitor/tawny:latest' >  .env
 #         echo 'TS_AUTHKEY=tskey-auth-...'            >> .env
 #         docker compose -f docker-compose.stack.yml up -d
 #
@@ -41,7 +41,7 @@ services:
   tawny:
     # Defaults to the published image. Pin a version with TAWNY_TAG (e.g.
     # 2.0.3), or point TAWNY_IMAGE at a full ref for a fork / private mirror.
-    image: "${TAWNY_IMAGE:-ghcr.io/pressf4me/tawny:${TAWNY_TAG:-latest}}"
+    image: "${TAWNY_IMAGE:-ghcr.io/tawny-pet-monitor/tawny:${TAWNY_TAG:-latest}}"
     # A plain `docker compose up -d` re-pulls, so a pushed rebuild lands on the
     # next `up` / stack update without a manual `docker pull`.
     pull_policy: always

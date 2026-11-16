@@ -1,6 +1,6 @@
 # Tawny — Portainer stack.
 #
-# Pulls the published image, ghcr.io/pressf4me/tawny:latest. Portainer ->
+# Pulls the published image, ghcr.io/tawny-pet-monitor/tawny:latest. Portainer ->
 # Stacks -> Add stack -> Web editor -> paste this file, and set TS_AUTHKEY in
 # the "Environment variables" box (get one at
 # https://login.tailscale.com/admin/settings/keys — Reusable, not Ephemeral).
@@ -22,7 +22,7 @@ name: tawny
 
 services:
   tawny:
-    image: "${TAWNY_IMAGE:-ghcr.io/pressf4me/tawny:${TAWNY_TAG:-latest}}"
+    image: "${TAWNY_IMAGE:-ghcr.io/tawny-pet-monitor/tawny:${TAWNY_TAG:-latest}}"
     pull_policy: always
     container_name: tawny
     restart: unless-stopped

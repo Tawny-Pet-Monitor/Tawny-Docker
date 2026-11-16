@@ -1,16 +1,18 @@
 name: release
 
 # Build and push the Tawny container to GHCR.
-#   - push a tag  vX.Y.Z   → publishes ghcr.io/pressf4me/tawny:X.Y.Z, :X.Y, :latest
+#   - push a tag  vX.Y.Z   → publishes ghcr.io/tawny-pet-monitor/tawny:X.Y.Z, :X.Y, :latest
 #   - manual run           → publishes :edge from the chosen ref
 #
 # Auth is the built-in GITHUB_TOKEN (no PAT). Because this workflow lives in
-# pressf4me/Tawny-Docker and the Dockerfile carries
-# org.opencontainers.image.source=…/pressf4me/Tawny-Docker, the package publishes
-# connected to this repo — not orphaned.
+# Tawny-Pet-Monitor/Tawny-Docker and the Dockerfile carries
+# org.opencontainers.image.source=…/Tawny-Pet-Monitor/Tawny-Docker, the package
+# publishes connected to this repo, not orphaned.
 #
-# The image name is fixed, not taken from the repo name: the repo was renamed
-# from `tawny` to `Tawny-Docker`, and every install pulls ghcr.io/pressf4me/tawny.
+# The image name is fixed, not taken from the repo name. It moved with the repo
+# from ghcr.io/pressf4me/tawny (2.2.12 and earlier, no longer updated) to
+# ghcr.io/tawny-pet-monitor/tawny (2.2.13 on): a workflow in the organization
+# cannot push to a personal account's package.
 #
 # Every action is pinned to a commit, not a tag: a tag can be moved to different
 # code by whoever controls (or has stolen) the action's repo, and this job holds
@@ -33,7 +35,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/pressf4me/tawny
+  IMAGE: ghcr.io/tawny-pet-monitor/tawny
 
 jobs:
   build:

@@ -10,7 +10,7 @@ FROM node:22-alpine
 # OCI metadata. org.opencontainers.image.source is what links the published
 # GHCR package to its repository (auto-connects on push from an actor with
 # write on that repo) — without it the package is orphaned.
-LABEL org.opencontainers.image.source="https://github.com/PressF4me/Tawny-Docker" \
+LABEL org.opencontainers.image.source="https://github.com/Tawny-Pet-Monitor/Tawny-Docker" \
       org.opencontainers.image.description="Tawny — self-hosted pet monitor: web client, signalling relay, TURN fallback, and Tailscale node"
 
 WORKDIR /app

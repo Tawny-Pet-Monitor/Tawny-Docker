@@ -31,13 +31,13 @@
 # default tracks :latest.
 #
 # To build it yourself instead: see "Building it yourself" in README.md
-# (bash tools/tawny-sync && docker build --network=host -t ghcr.io/pressf4me/tawny:latest .).
+# (bash tools/tawny-sync && docker build --network=host -t ghcr.io/tawny-pet-monitor/tawny:latest .).
 
 name: tawny
 
 services:
   tawny:
-    image: "${TAWNY_IMAGE:-ghcr.io/pressf4me/tawny:${TAWNY_TAG:-latest}}"
+    image: "${TAWNY_IMAGE:-ghcr.io/tawny-pet-monitor/tawny:${TAWNY_TAG:-latest}}"
     pull_policy: missing
     container_name: tawny
     restart: unless-stopped

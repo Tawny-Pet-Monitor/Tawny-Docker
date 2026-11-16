@@ -76,8 +76,14 @@ or browser on both. The container serves either role and joins your tailnet so
 the two ends can find each other; the video and audio go straight between them
 and never pass through it.
 
-The image is pulled from `ghcr.io/pressf4me/tawny` — nothing to build, and the
+The image is pulled from `ghcr.io/tawny-pet-monitor/tawny` — nothing to build, and the
 only file you need from this repo is `docker-compose.yml`.
+
+> **Upgrading from 2.2.12 or earlier?** The image moved from
+> `ghcr.io/pressf4me/tawny` to `ghcr.io/tawny-pet-monitor/tawny`. The old name
+> no longer gets updates. Change the `image:` line in your compose file (or your
+> `TAWNY_IMAGE`), then run `docker compose pull && docker compose up -d`. Your
+> data volume and settings are kept.
 
 ---
 
@@ -307,7 +313,7 @@ unreleased change, an air-gapped registry:
 ```sh
 bash tools/tawny-sync        # refresh the web client in app/public/ from ../Tawny Android
                              #   (override the source with TAWNY_ANDROID=/path)
-docker build --network=host -t ghcr.io/pressf4me/tawny:latest .
+docker build --network=host -t ghcr.io/tawny-pet-monitor/tawny:latest .
 docker compose up -d         # picks up the local image (pull_policy: missing)
 ```
 
