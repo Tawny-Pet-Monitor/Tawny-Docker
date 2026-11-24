@@ -19,7 +19,7 @@
 //   deno/main.ts     (Deno Deploy alternative)
 //   ../server.js     (self-host reference)
 
-export const PRIVACY_UPDATED = '2026-11-15';
+export const PRIVACY_UPDATED = '2026-11-24';
 
 export const PRIVACY_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
@@ -135,8 +135,8 @@ export const PRIVACY_HTML = `<!doctype html>
       <td><strong>Diagnostics log</strong></td>
       <td>An optional, deliberately out-of-the-way log (long-press the small
         version number) for working out why a connection failed. Records hashed
-        room identifiers and connection events, never your key or IP
-        addresses.</td>
+        room identifiers and connection events, never your key, IP addresses,
+        device identifiers or names.</td>
       <td>Only if you tap <strong>Send to Tawny</strong> &mdash; see
         &ldquo;Sending a diagnostics report&rdquo; below. Otherwise it stays on
         your device and is excluded from cloud backup.</td>
@@ -243,7 +243,12 @@ export const PRIVACY_HTML = `<!doctype html>
     <li>It contains no account, name, email or advertising identifier &mdash;
       there are none in the app &mdash; and the log records only hashed room
       identifiers and connection events (for example whether a connection was
-      direct or relayed), never your pairing key or IP addresses.</li>
+      direct or relayed).</li>
+    <li>Before the log is shown, sent or shared, the app takes out IP
+      addresses, home-network and tailnet host names, the ids and keys of your
+      devices, the parts of a pairing code that work as a key, and the names you
+      gave your devices or pets. The screen shows the exact text that would be
+      sent.</li>
     <li>Reports are held for at most 30 days and then deleted automatically.</li>
     <li>If you would rather not send it through the app, the same screen offers
       &ldquo;Send another way&rdquo; (your device's normal share sheet) and
