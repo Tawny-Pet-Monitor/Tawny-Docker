@@ -1,10 +1,10 @@
 {
-  "version": "2.2.13",
+  "version": "2.2.14",
   "notes": [
-    "relay|Its own meeting point|This server now runs a small relay at /relay, and devices find each other through relays first.",
-    "star|A clearer setup page|\"Tawny server\" shows what the box runs, with a live test of every meeting point.",
-    "server|Pair through this box only|The new setting TAWNY_ONLY_THIS_BOX=on pairs here and nowhere else.",
-    "lock|Old codes can't get in|An expired pairing code or an old QR code no longer connects."
+    "lock|Signed calls on your Wi-Fi|Every offer and answer is signed with the channel key, so no one else on the network can slip in.",
+    "relay|Straight back after a reload|A browser keeps the Monitor's Wi-Fi address, so a reload or a later visit reaches it right away.",
+    "zoom|Zoom where you pinch|Then drag to look into any corner of the room. On a computer, the mouse wheel zooms.",
+    "star|A safer End call|The light and dark switch left the call screen, where it sat just above End call."
   ],
-  "changelog": "https://github.com/PressF4me/Tawny-APK/blob/master/docs/changelog/docker.md"
+  "changelog": "https://github.com/Tawny-Pet-Monitor/Tawny-APK/blob/master/docs/changelog/docker.md"
 }
