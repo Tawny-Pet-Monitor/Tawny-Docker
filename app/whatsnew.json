@@ -1,10 +1,10 @@
 {
   "version": "2.2.13",
   "notes": [
-    "New: this server now runs its own meeting point (a small relay at /relay), and devices find each other through relays first",
-    "The setup page is now \"Tawny server\": what the box runs, and a live test of every meeting point",
-    "New setting TAWNY_ONLY_THIS_BOX=on pairs through this server and nowhere else",
-    "Security: an expired pairing code, or an old QR code, can no longer be used to connect"
+    "relay|Its own meeting point|This server now runs a small relay at /relay, and devices find each other through relays first.",
+    "star|A clearer setup page|\"Tawny server\" shows what the box runs, with a live test of every meeting point.",
+    "server|Pair through this box only|The new setting TAWNY_ONLY_THIS_BOX=on pairs here and nowhere else.",
+    "lock|Old codes can't get in|An expired pairing code or an old QR code no longer connects."
   ],
   "changelog": "https://github.com/PressF4me/Tawny-APK/blob/master/docs/changelog/docker.md"
 }
